@@ -1,0 +1,9 @@
+{
+  "name": "wiredepth",
+  "version": "1.0.0",
+  "description": "3D TCP/UDP protocol traffic visualizer — full protocol simulation, zero build step",
+  "type": "module",
+  "scripts": {
+    "start": "python3 -m http.server 8077"
+  }
+}
