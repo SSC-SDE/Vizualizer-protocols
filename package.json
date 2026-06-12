@@ -4,6 +4,7 @@
   "description": "3D TCP/UDP protocol traffic visualizer — full protocol simulation, zero build step",
   "type": "module",
   "scripts": {
-    "start": "python3 -m http.server 8077"
+    "start": "python3 -m http.server 8077",
+    "test": "node tests/transport.test.mjs && node tests/l2l3.test.mjs"
   }
 }

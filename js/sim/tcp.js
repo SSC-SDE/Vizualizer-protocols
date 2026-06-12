@@ -52,7 +52,7 @@ export class TcpConnection {
     this.ssthresh = 64 * MSS;
     this.srtt = null;
     this.rttvar = 0;
-    this.rto = 4.0;   // initial RTO > stretched sim RTT (~2.2s) to avoid spurious timeout
+    this.rto = 4.5;   // initial RTO > stretched sim RTT (~2.6s via router) to avoid spurious timeout
     this.rtoDeadline = null;
     this.dupAcks = 0;
     this.inRecovery = false;

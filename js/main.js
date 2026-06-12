@@ -15,6 +15,8 @@ const engine = new Engine();
 const web = engine.addHost(new Host('WEB-EDGE', '203.0.113.10', 'server', { x: 0, y: 5, z: -2 }));
 const dns = engine.addHost(new Host('DNS-CORE', '203.0.113.53', 'server', { x: -8.5, y: 3.6, z: 4 }));
 const media = engine.addHost(new Host('MEDIA-RELAY', '203.0.113.77', 'server', { x: 8.5, y: 4.2, z: 4 }));
+const router = engine.addHost(new Host('CORE-RTR', '10.0.0.1', 'router', { x: 0, y: 13, z: 6 }));
+engine.router = router;            // all IP traffic hops through the core
 
 const clients = [];
 const N_CLIENTS = 10;
@@ -29,7 +31,7 @@ for (let i = 0; i < N_CLIENTS; i++) {
   )));
 }
 
-const director = new TrafficDirector(engine, { web, dns, media, clients });
+const director = new TrafficDirector(engine, { web, dns, media, router, clients });
 
 // ---------------- scene ----------------
 
@@ -37,6 +39,7 @@ const world = new World(document.getElementById('app'));
 world.addServer(web, 0x00ccff);
 world.addServer(dns, 0xcc66ff);
 world.addServer(media, 0xff66cc);
+world.addRouter(router);
 const clientHues = [0x41a6ff, 0x44ddcc, 0x6688ff];
 clients.forEach((c, i) => world.addClient(c, clientHues[i % clientHues.length]));
 
@@ -47,9 +50,16 @@ const hud = new Hud(engine);
 const inspector = new Inspector(engine);
 
 // sim → gfx wiring
-engine.onSend = (pkt) => { packets.onSend(pkt); world.pulseHost(pkt.src, 0.5); };
+engine.onSend = (pkt) => {
+  packets.onSend(pkt);
+  world.pulseHost(pkt.src, 0.5);
+  if (pkt.kind === KIND.ARP_REQ) world.spawnRipple(pkt.src.pos);     // L2 broadcast hits the segment
+};
 engine.onDeliver = (pkt) => { packets.onDeliver(pkt); world.pulseHost(pkt.dst, 0.7); };
 engine.onDrop = (pkt) => packets.onDrop(pkt);
+
+// flow ribbons under active transport flows
+setInterval(() => world.syncFlowArcs(engine.flows, router), 500);
 
 world.onPickPacket = (pkt) => inspector.showPacket(pkt);
 world.onPickHost = (host) => inspector.showHost(host);
@@ -100,11 +110,14 @@ const scenarios = {
   synflood: () => director.synFlood(),
   dnsstorm: () => director.dnsStorm(),
   stream: () => inspector.selectFlow(director.stream()),
+  ping: () => inspector.selectFlow(director.ping()),
+  traceroute: () => inspector.selectFlow(director.traceroute()),
+  arp: () => director.arpSweep(),
 };
 document.querySelectorAll('[data-scn]').forEach(btn => {
   btn.onclick = () => scenarios[btn.dataset.scn]();
 });
-const keyMap = ['handshake', 'download', 'lossburst', 'synflood', 'dnsstorm', 'stream'];
+const keyMap = ['handshake', 'download', 'lossburst', 'synflood', 'dnsstorm', 'stream', 'ping', 'traceroute', 'arp'];
 addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT') return;
   if (e.code === 'Space') { e.preventDefault(); togglePause(); }

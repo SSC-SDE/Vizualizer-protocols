@@ -5,6 +5,10 @@ export const KIND = {
   SYN: 'SYN', SYNACK: 'SYN-ACK', ACK: 'ACK', DATA: 'DATA', RETRANS: 'RETRANS',
   FIN: 'FIN', RST: 'RST', REQ: 'REQUEST',
   DNS_Q: 'DNS-QUERY', DNS_R: 'DNS-REPLY', STREAM: 'STREAM',
+  ARP_REQ: 'ARP-REQ', ARP_REP: 'ARP-REP',
+  ECHO_REQ: 'ECHO-REQ', ECHO_REP: 'ECHO-REP',
+  TTL_EXC: 'TTL-EXCEED', UNREACH: 'UNREACHABLE',
+  PROBE: 'UDP-PROBE',
 };
 
 export const KIND_COLOR = {
@@ -19,17 +23,31 @@ export const KIND_COLOR = {
   [KIND.DNS_Q]: 0xcc66ff,
   [KIND.DNS_R]: 0x9d7bff,
   [KIND.STREAM]: 0xff66cc,
+  [KIND.ARP_REQ]: 0x9dff57,
+  [KIND.ARP_REP]: 0x57ff9d,
+  [KIND.ECHO_REQ]: 0xfafafa,
+  [KIND.ECHO_REP]: 0xbfd8d8,
+  [KIND.TTL_EXC]: 0xff8866,
+  [KIND.UNREACH]: 0xff4488,
+  [KIND.PROBE]: 0xd8c869,
 };
 
 export const MSS = 1460;
 
 let _hostId = 0;
+function genMac() {
+  // locally administered unicast
+  const b = [0x02, 0x42, ...Array.from({ length: 4 }, () => (Math.random() * 256) | 0)];
+  return b.map(x => x.toString(16).padStart(2, '0')).join(':');
+}
+
 export class Host {
   constructor(name, ip, kind, pos) {
     this.id = _hostId++;
     this.name = name;
     this.ip = ip;
-    this.kind = kind;          // 'server' | 'client' | 'bot'
+    this.mac = genMac();
+    this.kind = kind;          // 'server' | 'client' | 'bot' | 'router'
     this.pos = pos;            // {x,y,z} — engine uses it for latency, gfx for placement
     this.txPackets = 0;
     this.rxPackets = 0;
@@ -44,7 +62,7 @@ export class Packet {
     this.id = _pktId++;
     this.src = o.src;
     this.dst = o.dst;
-    this.proto = o.proto;            // 'TCP' | 'UDP'
+    this.proto = o.proto;            // 'TCP' | 'UDP' | 'ICMP' | 'ARP'
     this.kind = o.kind;              // KIND.*
     this.flags = o.flags || {};      // {SYN,ACK,FIN,RST,PSH}
     this.seq = o.seq ?? 0;
@@ -56,14 +74,24 @@ export class Packet {
     this.ttl = o.ttl ?? 64;
     this.note = o.note || '';
     this.flow = o.flow || null;
+    // ICMP header fields
+    this.icmpType = o.icmpType ?? 0;
+    this.icmpCode = o.icmpCode ?? 0;
+    this.icmpId = o.icmpId ?? 0;
+    this.icmpSeq = o.icmpSeq ?? 0;
+    // display overrides (e.g. traceroute probe addressed to server but dying at router)
+    this.dstIp = o.dstIp || null;
+    this.via = null;                 // router hop, set by engine.send
     this.t0 = 0;
     this.t1 = 0;
     this.lost = false;
     this.lostAt = 0.5;               // fraction of path where it dies
   }
   get totalLen() {
-    // IP header (20) + L4 header (TCP 20 / UDP 8) + payload
-    return 20 + (this.proto === 'TCP' ? 20 : 8) + this.len;
+    // Ethernet II (14) + L3/L4 headers + payload
+    if (this.proto === 'ARP') return 14 + 28;
+    if (this.proto === 'ICMP') return 14 + 20 + 8 + this.len;
+    return 14 + 20 + (this.proto === 'TCP' ? 20 : 8) + this.len;
   }
   get flagStr() {
     const f = [];
@@ -88,6 +116,7 @@ export class Engine {
     this.lossBurstRate = 0;
     this.latencyBase = 0.35;       // s, propagation floor — slow so packets are watchable
     this.latencyPerUnit = 0.022;   // s per world unit of distance
+    this.router = null;            // core router: IP traffic hops through it when set
     this.synBacklog = 0;           // server half-open count (SYN flood gauge)
     this.synBacklogMax = 64;
 
@@ -123,8 +152,16 @@ export class Engine {
 
   log(text, cls = '') { if (this.onLog) this.onLog(text, cls); }
 
-  latency(a, b) {
-    return this.latencyBase + dist(a.pos, b.pos) * this.latencyPerUnit;
+  latency(a, b, via = null) {
+    const d = via ? dist(a.pos, via.pos) + dist(via.pos, b.pos) : dist(a.pos, b.pos);
+    return this.latencyBase + d * this.latencyPerUnit;
+  }
+
+  /** IP traffic transits the core router; link-local (ARP) and router-terminated traffic goes direct. */
+  routeVia(pkt) {
+    if (!this.router || pkt.proto === 'ARP') return null;
+    if (pkt.src === this.router || pkt.dst === this.router) return null;
+    return this.router;
   }
 
   effectiveLoss() {
@@ -135,7 +172,8 @@ export class Engine {
 
   /** Put a packet on the wire. Returns the packet. */
   send(pkt, opts = {}) {
-    const lat = this.latency(pkt.src, pkt.dst) * (1 + (Math.random() - 0.5) * 0.12);
+    pkt.via = this.routeVia(pkt);
+    const lat = this.latency(pkt.src, pkt.dst, pkt.via) * (1 + (Math.random() - 0.5) * 0.12);
     pkt.t0 = this.time;
     pkt.t1 = this.time + lat;
     // links are FIFO queues: jitter must not reorder packets on the same path

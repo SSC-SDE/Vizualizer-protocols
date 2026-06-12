@@ -40,7 +40,7 @@
     <button id="btn-pause" title="space">⏸ pause</button>
     <label>time <input type="range" id="sl-speed" min="0.1" max="4" step="0.1" value="1"><span id="sl-speed-v">1.0×</span></label>
     <label>loss <input type="range" id="sl-loss" min="0" max="30" step="1" value="2"><span id="sl-loss-v">2%</span></label>
-    <label>ambient <input type="range" id="sl-ambient" min="0" max="10" step="1" value="3"><span id="sl-ambient-v">3</span></label>
+    <label>ambient <input type="range" id="sl-ambient" min="0" max="10" step="1" value="2"><span id="sl-ambient-v">2</span></label>
   </div>
   <div class="ctl-group scenarios">
     <button data-scn="handshake" title="key 1">1 · handshake</button>
@@ -49,6 +49,9 @@
     <button data-scn="synflood" title="key 4">4 · SYN flood</button>
     <button data-scn="dnsstorm" title="key 5">5 · DNS storm</button>
     <button data-scn="stream" title="key 6">6 · UDP stream</button>
+    <button data-scn="ping" title="key 7">7 · ping</button>
+    <button data-scn="traceroute" title="key 8">8 · traceroute</button>
+    <button data-scn="arp" title="key 9">9 · ARP sweep</button>
   </div>
   <div class="ctl-group legend" id="legend"></div>
 </div>

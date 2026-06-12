@@ -3,6 +3,7 @@
 
 import * as THREE from 'three';
 import { KIND_COLOR, KIND } from '../sim/engine.js';
+import { flightCurve, altitudeOf, laneFor } from './paths.js';
 
 const MAX = 3000;
 const _m = new THREE.Matrix4();
@@ -43,25 +44,15 @@ export class PacketLayer {
   packetAt(instanceId) { return this.slotPkt[instanceId]; }
 
   curveFor(pkt) {
-    const a = hostPoint(pkt.src);
-    const b = hostPoint(pkt.dst);
-    const mid = a.clone().lerp(b, 0.5);
-    const dist = a.distanceTo(b);
-    // lane separation: opposite directions arc on opposite sides + jitter
-    const dir = b.clone().sub(a).normalize();
-    const side = new THREE.Vector3().crossVectors(dir, new THREE.Vector3(0, 1, 0)).normalize();
-    const sideSign = pkt.src.id > pkt.dst.id ? 1 : -1;
-    mid.addScaledVector(side, sideSign * (1.5 + Math.random() * 2.2));
-    mid.y += 3.5 + dist * 0.22 + Math.random() * 1.5;
-    return new THREE.QuadraticBezierCurve3(a, mid, b);
+    return flightCurve(pkt.src, pkt.dst, pkt.via, altitudeOf(pkt), laneFor(pkt));
   }
 
   onSend(pkt) {
     if (this.free.length === 0) return;       // pool exhausted — sim still correct
     const slot = this.free.pop();
     const color = new THREE.Color(KIND_COLOR[pkt.kind] ?? 0xffffff);
-    // size by payload: ACKs are darts, full segments are comets
-    const size = pkt.len > 1000 ? 1.5 : pkt.len > 100 ? 1.1 : 0.7;
+    // size by payload: control packets are darts, full segments are comets
+    const size = pkt.len > 1000 ? 1.5 : pkt.len > 100 ? 1.0 : 0.6;
     this.live.set(pkt.id, { pkt, curve: this.curveFor(pkt), slot, color, size });
     this.slotPkt[slot] = pkt;
     this.mesh.setColorAt(slot, color);
@@ -124,7 +115,7 @@ export class PacketLayer {
       curve.getTangent(u, _tan).normalize();
       _q.setFromUnitVectors(_zAxis, _tan);
       // comet stretch along direction of travel
-      _s.set(size * 0.55, size * 0.55, size * 2.6);
+      _s.set(size * 0.55, size * 0.55, size * 2.3);
       _m.compose(_p, _q, _s);
       this.mesh.setMatrixAt(slot, _m);
     }
@@ -161,11 +152,6 @@ export class PacketLayer {
       f.sp.material.opacity = 0.9 * (1 - t);
     }
   }
-}
-
-function hostPoint(host) {
-  // servers store half-height in pos.y → emit from mid-rack; others from body
-  return new THREE.Vector3(host.pos.x, host.kind === 'server' ? host.pos.y : host.pos.y, host.pos.z);
 }
 
 function makeGlowTexture() {

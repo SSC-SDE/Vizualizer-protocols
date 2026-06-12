@@ -3,16 +3,30 @@
 import { Host } from './engine.js';
 import { TcpConnection } from './tcp.js';
 import { DnsTransaction, MediaStream } from './udp.js';
+import { ArpExchange, PingFlow, TracerouteFlow } from './l2l3.js';
 
 function pick(arr) { return arr[(Math.random() * arr.length) | 0]; }
+
+const MAX_AMBIENT_FLOWS = 26;      // decongestion: cap concurrent ambient flows
 
 export class TrafficDirector {
   constructor(engine, topo) {
     this.engine = engine;
-    this.topo = topo;              // {web, dns, media, clients[]}
-    this.ambient = 3;              // 0..10 density
+    this.topo = topo;              // {web, dns, media, router, clients[]}
+    this.ambient = 2;              // 0..10 density
     this._acc = 0;
     this.onSpawnBot = null;        // gfx hook for temporary flood bots
+    this.arpCache = new Set();     // host ids that already resolved the gateway MAC
+  }
+
+  /** Resolve gateway MAC first (once per host), then run the flow. Real stacks do exactly this. */
+  ensureArp(host, then) {
+    const gw = this.topo.router;
+    if (!gw || this.arpCache.has(host.id)) { then(); return; }
+    this.arpCache.add(host.id);
+    const arp = new ArpExchange(this.engine, host, gw, then);
+    this.engine.addFlow(arp);
+    arp.open();
   }
 
   // ---------- scenarios ----------
@@ -24,7 +38,7 @@ export class TrafficDirector {
       bytes: 6 * 1460, label: 'handshake demo', dport: 80,
     });
     this.engine.addFlow(conn);
-    conn.open();
+    this.ensureArp(c, () => conn.open());
     this.engine.log('— scenario: 3-way handshake → 6 segments → FIN teardown', 'ok');
     return conn;
   }
@@ -35,9 +49,41 @@ export class TrafficDirector {
       bytes: (300 + ((Math.random() * 900) | 0)) * 1024, label: 'large download', dport: 443,
     });
     this.engine.addFlow(conn);
-    conn.open();
+    this.ensureArp(c, () => conn.open());
     this.engine.log('— scenario: bulk transfer — watch slow start open the window', 'ok');
     return conn;
+  }
+
+  ping() {
+    const c = pick(this.topo.clients);
+    const target = pick([this.topo.web, this.topo.media, this.topo.dns]);
+    const flow = new PingFlow(this.engine, c, target);
+    this.engine.addFlow(flow);
+    this.ensureArp(c, () => flow.open());
+    this.engine.log('— scenario: ICMP echo — L3 ping, RTT per reply', 'ok');
+    return flow;
+  }
+
+  traceroute() {
+    const c = pick(this.topo.clients);
+    const flow = new TracerouteFlow(this.engine, c, this.topo.web, this.topo.router);
+    this.engine.addFlow(flow);
+    this.ensureArp(c, () => flow.open());
+    this.engine.log('— scenario: traceroute — TTL=1 dies at router (time-exceeded), TTL=2 lands (port-unreachable)', 'ok');
+    return flow;
+  }
+
+  arpSweep() {
+    this.arpCache.clear();
+    this.topo.clients.forEach((c, i) => {
+      setTimeoutSim(this.engine, i * 0.35, () => {
+        this.arpCache.add(c.id);
+        const arp = new ArpExchange(this.engine, c, this.topo.router);
+        this.engine.addFlow(arp);
+        arp.open();
+      });
+    });
+    this.engine.log('— scenario: gratuitous ARP sweep — every client re-learns the gateway MAC (L2 broadcast)', 'ok');
   }
 
   lossBurst() {
@@ -70,7 +116,7 @@ export class TrafficDirector {
       const c = pick(this.topo.clients);
       const tx = new DnsTransaction(this.engine, c, this.topo.dns);
       this.engine.addFlow(tx);
-      setTimeoutSim(this.engine, Math.random() * 2.5, () => tx.open());
+      setTimeoutSim(this.engine, Math.random() * 2.5, () => this.ensureArp(c, () => tx.open()));
     }
     this.engine.log(`— scenario: ${count} parallel DNS lookups (UDP/53, retry on timeout)`, 'ok');
   }
@@ -99,20 +145,25 @@ export class TrafficDirector {
   }
 
   _spawnRandom() {
+    if (this.engine.flows.length >= MAX_AMBIENT_FLOWS) return;   // keep the airspace readable
     const r = Math.random();
     const c = pick(this.topo.clients);
-    if (r < 0.5) {
+    if (r < 0.45) {
       const conn = new TcpConnection(this.engine, c, this.topo.web, {
         bytes: (20 + ((Math.random() * 400) | 0)) * 1024,
         label: pick(['page load', 'API call', 'asset fetch', 'upload sync']),
         dport: pick([80, 443, 443, 8080]),
       });
       this.engine.addFlow(conn);
-      conn.open();
-    } else if (r < 0.8) {
+      this.ensureArp(c, () => conn.open());
+    } else if (r < 0.72) {
       const tx = new DnsTransaction(this.engine, c, this.topo.dns);
       this.engine.addFlow(tx);
-      tx.open();
+      this.ensureArp(c, () => tx.open());
+    } else if (r < 0.84) {
+      const flow = new PingFlow(this.engine, c, pick([this.topo.web, this.topo.media]), { count: 3 });
+      this.engine.addFlow(flow);
+      this.ensureArp(c, () => flow.open());
     } else {
       const s = new MediaStream(this.engine, this.topo.media, c, {
         rate: 8 + ((Math.random() * 10) | 0),

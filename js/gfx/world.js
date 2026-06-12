@@ -5,6 +5,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { flightCurve, LAYER_ALT } from './paths.js';
 
 export class World {
   constructor(container) {
@@ -33,12 +34,16 @@ export class World {
     // bloom
     this.composer = new EffectComposer(this.renderer);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
-    this.bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.9, 0.55, 0.12);
+    this.bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.7, 0.5, 0.14);
     this.composer.addPass(this.bloom);
 
     this._lights();
     this._floor();
     this._stars();
+    this._layerRings();
+
+    this.ripples = [];
+    this.flowArcs = new Map();     // flow -> {line, lastSeen}
 
     this.hostMeshes = new Map();   // host.id -> {group, mesh, baseEmissive, host}
     this.linkLines = new Map();    // flowKey -> line
@@ -97,7 +102,112 @@ export class World {
     this.scene.add(new THREE.Points(g, m));
   }
 
+  _layerRings() {
+    // faint altitude rings labelling the OSI airspace lanes
+    const layers = [
+      { alt: LAYER_ALT.L2, color: 0x9dff57, label: 'L2 · LINK / ARP' },
+      { alt: LAYER_ALT.L3, color: 0xff8866, label: 'L3 · NETWORK / ICMP' },
+      { alt: LAYER_ALT.L4_UDP, color: 0xcc66ff, label: 'L4 · UDP' },
+      { alt: LAYER_ALT.L4_TCP, color: 0x00ccff, label: 'L4 · TCP' },
+    ];
+    const R = 36;
+    for (const l of layers) {
+      const pts = [];
+      for (let i = 0; i <= 96; i++) {
+        const a = (i / 96) * Math.PI * 2;
+        pts.push(new THREE.Vector3(Math.cos(a) * R, l.alt, Math.sin(a) * R));
+      }
+      const geo = new THREE.BufferGeometry().setFromPoints(pts);
+      const line = new THREE.Line(geo, new THREE.LineBasicMaterial({
+        color: l.color, transparent: true, opacity: 0.10,
+      }));
+      this.scene.add(line);
+
+      const sprite = this._label(l.label + '\n', l.color, 0);
+      sprite.position.set(R * 0.78, l.alt + 0.9, -R * 0.62);
+      sprite.scale.set(7, 1.75, 1);
+      sprite.material.opacity = 0.5;
+      this.scene.add(sprite);
+    }
+  }
+
+  spawnRipple(pos, color = 0x9dff57) {
+    // expanding floor ring — ARP broadcast hitting the segment
+    const geo = new THREE.RingGeometry(0.9, 1.05, 48);
+    const mat = new THREE.MeshBasicMaterial({
+      color, transparent: true, opacity: 0.85, side: THREE.DoubleSide,
+      depthWrite: false, blending: THREE.AdditiveBlending,
+    });
+    const ring = new THREE.Mesh(geo, mat);
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.set(pos.x, 0.12, pos.z);
+    this.scene.add(ring);
+    this.ripples.push({ ring, life: 1.5, max: 1.5 });
+  }
+
+  /** Faint persistent ribbons under active transport flows — structure instead of chaos. */
+  syncFlowArcs(flows, router) {
+    const seen = new Set();
+    for (const f of flows) {
+      if (f.proto !== 'TCP' && f.proto !== 'UDP') continue;
+      if (!f.client || !f.server || f.dead) continue;
+      seen.add(f);
+      if (this.flowArcs.has(f)) continue;
+      const alt = f.proto === 'TCP' ? LAYER_ALT.L4_TCP : LAYER_ALT.L4_UDP;
+      const curve = flightCurve(f.client, f.server, router, alt, 0);
+      const geo = new THREE.BufferGeometry().setFromPoints(curve.getPoints(40));
+      const color = f.proto === 'TCP' ? 0x00ccff : (f.rate ? 0xff66cc : 0xcc66ff);
+      const line = new THREE.Line(geo, new THREE.LineBasicMaterial({
+        color, transparent: true, opacity: 0.0, blending: THREE.AdditiveBlending, depthWrite: false,
+      }));
+      this.scene.add(line);
+      this.flowArcs.set(f, { line, target: 0.10 });
+    }
+    for (const [f, rec] of this.flowArcs) {
+      if (!seen.has(f)) rec.target = 0;       // fade out, removed in update()
+    }
+  }
+
   // ---------------- hosts ----------------
+
+  addRouter(host, accent = 0xffd24d) {
+    const group = new THREE.Group();
+    group.position.set(host.pos.x, host.pos.y, host.pos.z);
+
+    const core = new THREE.Mesh(
+      new THREE.OctahedronGeometry(2.1, 0),
+      new THREE.MeshStandardMaterial({
+        color: 0x1a1408, roughness: 0.25, metalness: 0.8,
+        emissive: accent, emissiveIntensity: 0.5,
+      }),
+    );
+    core.userData.host = host;
+    group.add(core);
+
+    const ringMat = new THREE.MeshBasicMaterial({ color: accent, transparent: true, opacity: 0.5 });
+    const r1 = new THREE.Mesh(new THREE.TorusGeometry(3.4, 0.06, 8, 64), ringMat);
+    const r2 = new THREE.Mesh(new THREE.TorusGeometry(4.3, 0.04, 8, 64), ringMat.clone());
+    r2.material.opacity = 0.3;
+    group.add(r1, r2);
+
+    // light beam down to the grid — the router is the spine of the topology
+    const beam = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.06, 0.5, host.pos.y, 8, 1, true),
+      new THREE.MeshBasicMaterial({
+        color: accent, transparent: true, opacity: 0.18,
+        blending: THREE.AdditiveBlending, depthWrite: false,
+      }),
+    );
+    beam.position.y = -host.pos.y / 2;
+    group.add(beam);
+
+    group.add(this._label(`${host.name}\n${host.ip} · ${host.mac}`, accent, 4.4));
+    this.scene.add(group);
+    this.hostMeshes.set(host.id, {
+      group, mesh: core, baseEmissive: 0.5, host, accent, spin: true, rings: [r1, r2],
+    });
+    return group;
+  }
 
   addServer(host, accent) {
     const group = new THREE.Group();
@@ -240,10 +350,42 @@ export class World {
         rec.mesh.rotation.y += dtReal * 0.6;
         rec.mesh.rotation.x += dtReal * 0.2;
       }
+      if (rec.rings) {
+        rec.rings[0].rotation.x += dtReal * 0.5;
+        rec.rings[1].rotation.y += dtReal * 0.32;
+      }
       // decay pulse glow back to baseline
       const m = rec.mesh.material;
       if (m.emissiveIntensity > rec.baseEmissive) {
         m.emissiveIntensity = Math.max(rec.baseEmissive, m.emissiveIntensity - dtReal * 2.5);
+      }
+    }
+
+    // ARP ripples
+    for (let i = this.ripples.length - 1; i >= 0; i--) {
+      const r = this.ripples[i];
+      r.life -= dtReal;
+      if (r.life <= 0) {
+        this.scene.remove(r.ring);
+        r.ring.geometry.dispose();
+        r.ring.material.dispose();
+        this.ripples.splice(i, 1);
+        continue;
+      }
+      const t = 1 - r.life / r.max;
+      r.ring.scale.setScalar(1 + t * 16);
+      r.ring.material.opacity = 0.85 * (1 - t);
+    }
+
+    // flow ribbons fade toward target opacity
+    for (const [f, rec] of this.flowArcs) {
+      const m = rec.line.material;
+      m.opacity += (rec.target - m.opacity) * Math.min(1, dtReal * 2.5);
+      if (rec.target === 0 && m.opacity < 0.01) {
+        this.scene.remove(rec.line);
+        rec.line.geometry.dispose();
+        m.dispose();
+        this.flowArcs.delete(f);
       }
     }
   }

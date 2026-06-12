@@ -2,7 +2,7 @@
 // byte-for-byte with a real IPv4 checksum), hover-linked hex dump, per-connection
 // congestion chart and a wire ladder diagram.
 
-import { KIND_COLOR, MSS } from '../sim/engine.js';
+import { KIND_COLOR, KIND, MSS } from '../sim/engine.js';
 import { fmtBytes } from './hud.js';
 
 export class Inspector {
@@ -28,7 +28,7 @@ export class Inspector {
     for (const f of flows) {
       const row = document.createElement('div');
       row.className = 'flow-row' + (f === this.selected ? ' sel' : '');
-      const protoColor = f.proto === 'TCP' ? '#00ccff' : '#cc66ff';
+      const protoColor = { TCP: '#00ccff', UDP: '#cc66ff', ICMP: '#ff8866', ARP: '#9dff57' }[f.proto] || '#fff';
       let extra = '';
       if (f.proto === 'TCP' && f.totalBytes > 0) {
         extra = `${Math.round(f.progress * 100)}%`;
@@ -133,8 +133,23 @@ export class Inspector {
       rows.push(['frames lost', `<span class="${f.lostCount ? 'bad' : ''}">${f.lostCount}</span> (no recovery — UDP)`]);
       rows.push(['jitter (smoothed)', (f.jitter * 1000).toFixed(0) + ' ms']);
     }
+    if (f.rtts) {                          // ping
+      const ms = f.rtts.map(r => r * 1000);
+      rows.push(['replies', `${f.rtts.length}/${f.count}, ${f.lost} lost`]);
+      if (ms.length) rows.push(['rtt min/avg/max', `${Math.min(...ms).toFixed(0)} / ${(ms.reduce((a, b) => a + b, 0) / ms.length).toFixed(0)} / ${Math.max(...ms).toFixed(0)} ms`]);
+    }
+    if (f.hopRtts) {                       // traceroute
+      f.hops.forEach((hop, i) => {
+        const times = f.hopRtts[i].map(r => isNaN(r) ? '*' : (r * 1000).toFixed(0) + 'ms').join(' ') || '…';
+        rows.push([`hop ${i + 1}`, `${esc(hop.name)} (${hop.ip}) ${times}`]);
+      });
+    }
+    if (f.proto === 'ARP') {
+      rows.push(['question', `who-has ${f.server.ip}?`]);
+      rows.push(['answer', f.state === 'RESOLVED' ? `is-at ${f.server.mac}` : '—']);
+    }
     this.bodyEl.innerHTML = `
-      <div class="sec-title">UDP · ${esc(f.label)}</div>
+      <div class="sec-title">${esc(f.proto)} · ${esc(f.label)}</div>
       <table class="field-table">${rows.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('')}</table>
       <div class="sec-title">wire ladder</div>
       <canvas id="ladder" width="356" height="300"></canvas>
@@ -245,17 +260,23 @@ export class Inspector {
       .map(k => `<span class="flagchip" style="color:${color}">${k}</span>`)
       .join('') || '<span class="dim">none</span>';
 
-    const fieldRows = fields.map((f, i) =>
-      `<tr data-hex data-range="${f.off},${f.len}"><td>${f.name}</td><td>${f.value}</td></tr>`,
+    const fieldRows = fields.map((f) =>
+      f.section
+        ? `<tr><td colspan="2" style="color:var(--accent);letter-spacing:0.08em;padding-top:8px">▾ ${f.section}</td></tr>`
+        : `<tr data-hex data-range="${f.off},${f.len}"><td>${f.name}</td><td>${f.value}</td></tr>`,
     ).join('');
+
+    const hops = pkt.via
+      ? `${esc(pkt.src.name)} → <span class="dim">${esc(pkt.via.name)}</span> → ${esc(pkt.dst.name)}`
+      : `${esc(pkt.src.name)} → ${esc(pkt.dst.name)}`;
 
     this.bodyEl.innerHTML = `
       <div class="sec-title" style="color:${color}">packet #${pkt.id} · ${pkt.proto} · ${pkt.kind}
         ${pkt.lost ? '<span class="bad"> · LOST IN TRANSIT</span>' : ''}</div>
       <table class="field-table">
-        <tr><td>route</td><td>${esc(pkt.src.ip)} → ${esc(pkt.dst.ip)}</td></tr>
-        <tr><td>hosts</td><td>${esc(pkt.src.name)} → ${esc(pkt.dst.name)}</td></tr>
-        <tr><td>flags</td><td>${flagChips}</td></tr>
+        <tr><td>route</td><td>${esc(pkt.src.ip)} → ${esc(pkt.dstIp || pkt.dst.ip)}</td></tr>
+        <tr><td>path</td><td>${hops}</td></tr>
+        ${pkt.proto === 'TCP' ? `<tr><td>flags</td><td>${flagChips}</td></tr>` : ''}
         <tr><td>size on wire</td><td>${pkt.totalLen} B (hdr ${pkt.totalLen - pkt.len} + payload ${pkt.len})</td></tr>
         <tr><td>one-way latency</td><td>${(pkt.t1 - pkt.t0).toFixed(2)}s (sim)</td></tr>
         ${pkt.note ? `<tr><td>annotation</td><td class="dim">${esc(pkt.note)}</td></tr>` : ''}
@@ -299,91 +320,147 @@ function ipv4Checksum(bytes) {
   return (~sum) & 0xffff;
 }
 
+function macToBytes(mac) {
+  return mac.split(':').map(h => parseInt(h, 16));
+}
+
+const u32 = v => [(v >>> 24) & 0xff, (v >>> 16) & 0xff, (v >>> 8) & 0xff, v & 0xff];
+const u16 = v => [(v >> 8) & 0xff, v & 0xff];
+
 function buildHeaderBytes(pkt) {
+  const bytes = [];
+  const fields = [];
+  const section = (name) => fields.push({ section: name });
+  const field = (name, value, len, arr) => {
+    fields.push({ name, value, off: bytes.length, len });
+    if (arr) bytes.push(...arr);
+  };
+
+  // ============ Ethernet II — Layer 2 ============
+  const isBroadcast = pkt.kind === KIND.ARP_REQ;
+  const nextHop = pkt.via || pkt.dst;
+  const dstMac = isBroadcast ? 'ff:ff:ff:ff:ff:ff' : nextHop.mac;
+  const etherType = pkt.proto === 'ARP' ? 0x0806 : 0x0800;
+
+  section('ETHERNET II · LAYER 2');
+  field('dst MAC', isBroadcast
+    ? 'ff:ff:ff:ff:ff:ff <span class="dim">(broadcast)</span>'
+    : `${dstMac}${pkt.via ? ` <span class="dim">(next hop: ${esc(pkt.via.name)})</span>` : ''}`,
+    6, macToBytes(dstMac));
+  field('src MAC', pkt.src.mac, 6, macToBytes(pkt.src.mac));
+  field('ethertype', `0x${etherType.toString(16).padStart(4, '0')} (${pkt.proto === 'ARP' ? 'ARP' : 'IPv4'})`,
+    2, u16(etherType));
+
+  // ============ ARP — resolves L3→L2, no IP header ============
+  if (pkt.proto === 'ARP') {
+    const isReq = pkt.kind === KIND.ARP_REQ;
+    const tha = isReq ? '00:00:00:00:00:00' : pkt.dst.mac;
+    section('ARP · ADDRESS RESOLUTION');
+    field('hardware type', '1 (Ethernet)', 2, u16(1));
+    field('protocol type', '0x0800 (IPv4)', 2, u16(0x0800));
+    field('hw / proto size', '6 / 4', 2, [6, 4]);
+    field('opcode', isReq ? '1 (who-has)' : '2 (is-at)', 2, u16(isReq ? 1 : 2));
+    field('sender MAC', pkt.src.mac, 6, macToBytes(pkt.src.mac));
+    field('sender IP', pkt.src.ip, 4, ipToBytes(pkt.src.ip));
+    field('target MAC', isReq ? '00:00:00:00:00:00 <span class="dim">(unknown — that’s the question)</span>' : tha,
+      6, macToBytes(tha));
+    field('target IP', pkt.dst.ip, 4, ipToBytes(pkt.dst.ip));
+    return { bytes, fields };
+  }
+
+  // ============ IPv4 — Layer 3 (checksum computed for real) ============
   const isTcp = pkt.proto === 'TCP';
+  const isIcmp = pkt.proto === 'ICMP';
   const l4len = isTcp ? 20 : 8;
-  const totalLen = 20 + l4len + pkt.len;
+  const ipTotal = 20 + l4len + pkt.len;
   const ipId = pkt.id & 0xffff;
-  const src = ipToBytes(pkt.src.ip);
-  const dst = ipToBytes(pkt.dst.ip);
+  const ipProto = isIcmp ? 1 : isTcp ? 6 : 17;
+  const dstIpStr = pkt.dstIp || pkt.dst.ip;
 
-  // ---- IPv4 header (checksum computed for real) ----
-  const ip = [
-    0x45, 0x00,
-    (totalLen >> 8) & 0xff, totalLen & 0xff,
-    (ipId >> 8) & 0xff, ipId & 0xff,
-    0x40, 0x00,                                 // DF, no fragment
-    pkt.ttl, isTcp ? 6 : 17,
-    0x00, 0x00,                                 // checksum placeholder
-    ...src, ...dst,
+  const ipHdr = [
+    0x45, 0x00, ...u16(ipTotal), ...u16(ipId), 0x40, 0x00,
+    pkt.ttl, ipProto, 0x00, 0x00,
+    ...ipToBytes(pkt.src.ip), ...ipToBytes(dstIpStr),
   ];
-  const ck = ipv4Checksum(ip);
-  ip[10] = (ck >> 8) & 0xff;
-  ip[11] = ck & 0xff;
+  const ck = ipv4Checksum(ipHdr);
+  ipHdr[10] = (ck >> 8) & 0xff;
+  ipHdr[11] = ck & 0xff;
 
-  let l4, fields;
-  const u32 = v => [(v >>> 24) & 0xff, (v >>> 16) & 0xff, (v >>> 8) & 0xff, v & 0xff];
-  const u16 = v => [(v >> 8) & 0xff, v & 0xff];
+  const ipBase = bytes.length;
+  section('IPV4 · LAYER 3');
+  bytes.push(...ipHdr);
+  const ipField = (name, value, off, len) => fields.push({ name, value, off: ipBase + off, len });
+  ipField('version / IHL', '4 / 20 bytes', 0, 1);
+  ipField('total length', ipTotal + ' B', 2, 2);
+  ipField('identification', '0x' + ipId.toString(16).padStart(4, '0'), 4, 2);
+  ipField('flags', 'DF (don’t fragment)', 6, 2);
+  ipField('TTL', pkt.via
+    ? `${pkt.ttl} → ${pkt.ttl - 1} <span class="dim">(decremented at ${esc(pkt.via.name)})</span>`
+    : String(pkt.ttl), 8, 1);
+  ipField('protocol', `${ipProto} (${pkt.proto})`, 9, 1);
+  ipField('header checksum', '0x' + ck.toString(16).padStart(4, '0') + ' <span class="ok">✓ computed</span>', 10, 2);
+  ipField('src address', pkt.src.ip, 12, 4);
+  ipField('dst address', dstIpStr, 16, 4);
 
-  if (isTcp) {
+  // ============ Layer 4 / ICMP ============
+  const l4Base = bytes.length;
+  const lf = (name, value, off, len) => fields.push({ name, value, off: l4Base + off, len });
+
+  if (isIcmp) {
+    const icmpHdr = [pkt.icmpType, pkt.icmpCode, 0, 0, ...u16(pkt.icmpId), ...u16(pkt.icmpSeq & 0xffff)];
+    const ick = ipv4Checksum(icmpHdr);
+    icmpHdr[2] = (ick >> 8) & 0xff;
+    icmpHdr[3] = ick & 0xff;
+    section('ICMP · LAYER 3 CONTROL');
+    bytes.push(...icmpHdr);
+    lf('type', `${pkt.icmpType} (${icmpTypeName(pkt.icmpType)})`, 0, 1);
+    lf('code', `${pkt.icmpCode}${pkt.icmpType === 3 ? ' (port unreachable)' : ''}`, 1, 1);
+    lf('checksum', '0x' + ick.toString(16).padStart(4, '0') + ' <span class="ok">✓ computed</span>', 2, 2);
+    lf('identifier', String(pkt.icmpId), 4, 2);
+    lf('sequence', String(pkt.icmpSeq), 6, 2);
+  } else if (isTcp) {
     const flagBits =
       (pkt.flags.FIN ? 0x01 : 0) | (pkt.flags.SYN ? 0x02 : 0) | (pkt.flags.RST ? 0x04 : 0) |
       (pkt.flags.PSH ? 0x08 : 0) | (pkt.flags.ACK ? 0x10 : 0);
-    l4 = [
+    section('TCP · LAYER 4');
+    bytes.push(
       ...u16(pkt.sport), ...u16(pkt.dport),
       ...u32(pkt.seq >>> 0), ...u32(pkt.ackNo >>> 0),
-      0x50, flagBits,
-      ...u16(pkt.win & 0xffff),
-      0xbe, 0xef,                              // L4 checksum not modeled (needs pseudo-header)
-      0x00, 0x00,
-    ];
-    fields = [
-      { name: 'IP version / IHL', off: 0, len: 1, value: '4 / 20 bytes' },
-      { name: 'IP total length', off: 2, len: 2, value: totalLen + ' B' },
-      { name: 'IP identification', off: 4, len: 2, value: '0x' + ipId.toString(16).padStart(4, '0') },
-      { name: 'IP flags', off: 6, len: 2, value: 'DF (don’t fragment)' },
-      { name: 'TTL', off: 8, len: 1, value: String(pkt.ttl) },
-      { name: 'protocol', off: 9, len: 1, value: '6 (TCP)' },
-      { name: 'IP checksum', off: 10, len: 2, value: '0x' + ck.toString(16).padStart(4, '0') + ' <span class="ok">✓ computed</span>' },
-      { name: 'src address', off: 12, len: 4, value: pkt.src.ip },
-      { name: 'dst address', off: 16, len: 4, value: pkt.dst.ip },
-      { name: 'src port', off: 20, len: 2, value: String(pkt.sport) },
-      { name: 'dst port', off: 22, len: 2, value: pkt.dport + portService(pkt.dport) },
-      { name: 'sequence number', off: 24, len: 4, value: String(pkt.seq >>> 0) },
-      { name: 'ack number', off: 28, len: 4, value: pkt.flags.ACK ? String(pkt.ackNo >>> 0) : '0 (ACK not set)' },
-      { name: 'data offset', off: 32, len: 1, value: '5 (20 B header)' },
-      { name: 'flags', off: 33, len: 1, value: `0x${flagBits.toString(16).padStart(2, '0')} [${pkt.flagStr}]` },
-      { name: 'window', off: 34, len: 2, value: String(pkt.win & 0xffff) },
-      { name: 'TCP checksum', off: 36, len: 2, value: '0xbeef <span class="dim">(not modeled)</span>' },
-      { name: 'urgent pointer', off: 38, len: 2, value: '0' },
-    ];
+      0x50, flagBits, ...u16(pkt.win & 0xffff),
+      0xbe, 0xef, 0x00, 0x00,
+    );
+    lf('src port', String(pkt.sport), 0, 2);
+    lf('dst port', pkt.dport + portService(pkt.dport), 2, 2);
+    lf('sequence number', String(pkt.seq >>> 0), 4, 4);
+    lf('ack number', pkt.flags.ACK ? String(pkt.ackNo >>> 0) : '0 (ACK not set)', 8, 4);
+    lf('data offset', '5 (20 B header)', 12, 1);
+    lf('flags', `0x${flagBits.toString(16).padStart(2, '0')} [${pkt.flagStr}]`, 13, 1);
+    lf('window', String(pkt.win & 0xffff), 14, 2);
+    lf('TCP checksum', '0xbeef <span class="dim">(not modeled)</span>', 16, 2);
+    lf('urgent pointer', '0', 18, 2);
   } else {
     const udpLen = 8 + pkt.len;
-    l4 = [...u16(pkt.sport), ...u16(pkt.dport), ...u16(udpLen), 0xca, 0xfe];
-    fields = [
-      { name: 'IP version / IHL', off: 0, len: 1, value: '4 / 20 bytes' },
-      { name: 'IP total length', off: 2, len: 2, value: totalLen + ' B' },
-      { name: 'TTL', off: 8, len: 1, value: String(pkt.ttl) },
-      { name: 'protocol', off: 9, len: 1, value: '17 (UDP)' },
-      { name: 'IP checksum', off: 10, len: 2, value: '0x' + ck.toString(16).padStart(4, '0') + ' <span class="ok">✓ computed</span>' },
-      { name: 'src address', off: 12, len: 4, value: pkt.src.ip },
-      { name: 'dst address', off: 16, len: 4, value: pkt.dst.ip },
-      { name: 'src port', off: 20, len: 2, value: String(pkt.sport) },
-      { name: 'dst port', off: 22, len: 2, value: pkt.dport + portService(pkt.dport) },
-      { name: 'UDP length', off: 24, len: 2, value: udpLen + ' B' },
-      { name: 'UDP checksum', off: 26, len: 2, value: '0xcafe <span class="dim">(not modeled)</span>' },
-    ];
+    section('UDP · LAYER 4');
+    bytes.push(...u16(pkt.sport), ...u16(pkt.dport), ...u16(udpLen), 0xca, 0xfe);
+    lf('src port', String(pkt.sport), 0, 2);
+    lf('dst port', pkt.dport + portService(pkt.dport), 2, 2);
+    lf('UDP length', udpLen + ' B', 4, 2);
+    lf('UDP checksum', '0xcafe <span class="dim">(not modeled)</span>', 6, 2);
   }
 
   // payload preview (synthesized, ≤32 bytes)
-  let payload = [];
   if (pkt.len > 0) {
     const text = payloadPreview(pkt);
-    payload = [...text].slice(0, 32).map(c => c.charCodeAt(0) & 0x7f);
-    fields.push({ name: 'payload', off: 20 + l4len, len: payload.length, value: `${pkt.len} B — "${esc(text.slice(0, 36))}…"` });
+    const payload = [...text].slice(0, 32).map(c => c.charCodeAt(0) & 0x7f);
+    fields.push({ name: 'payload', off: bytes.length, len: payload.length, value: `${pkt.len} B — "${esc(text.slice(0, 36))}…"` });
+    bytes.push(...payload);
   }
 
-  return { bytes: [...ip, ...l4, ...payload], fields };
+  return { bytes, fields };
+}
+
+function icmpTypeName(t) {
+  return { 0: 'echo reply', 3: 'destination unreachable', 8: 'echo request', 11: 'time exceeded' }[t] || '?';
 }
 
 function payloadPreview(pkt) {
@@ -392,6 +469,9 @@ function payloadPreview(pkt) {
     case 'DNS-QUERY': return (pkt.note.match(/A\? (\S+)/)?.[1] || 'query') + ' IN A?';
     case 'DNS-REPLY': return pkt.note;
     case 'STREAM': return pkt.note;
+    case 'ECHO-REQ': case 'ECHO-REP': return 'abcdefghijklmnopqrstuvwabcdefghi';   // classic ping pattern
+    case 'TTL-EXCEED': case 'UNREACHABLE': return '[IP header + 8 bytes of offending datagram]';
+    case 'UDP-PROBE': return 'SUPERMAN traceroute probe';
     default: return 'a9 3f c4 segment payload (' + pkt.len + ' B)';
   }
 }
