@@ -51,6 +51,7 @@ engine.onDrop = (pkt) => { packets.onDrop(pkt); tutor.onDrop(pkt); };
 world.onPickPacket = (pkt) => inspector.showPacket(pkt);
 world.onPickHost = (host) => inspector.showHost(host);
 director.onSpawnBot = (bot) => world.addBot(bot);
+director.onActivity = (host, text, color) => world.showActivity(host, text, color);
 
 function follow(name, flow) {
   inspector.selectFlow(flow);

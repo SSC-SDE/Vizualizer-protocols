@@ -9,6 +9,37 @@ function pick(arr) { return arr[(Math.random() * arr.length) | 0]; }
 
 const MAX_AMBIENT_FLOWS = 26;      // decongestion: cap concurrent ambient flows
 
+// [flow label, human activity bubble] — the bubble always matches the real traffic
+const WEB_ACTIVITIES = [
+  ['page load', '🌐 doomscrolling reddit'],
+  ['page load', '📰 reading hacker news'],
+  ['page load', '🎮 downloading game patch'],
+  ['API call', '💬 sending discord message'],
+  ['API call', '📈 refreshing stock app'],
+  ['API call', '🤖 asking claude something'],
+  ['asset fetch', '🛒 browsing amazon'],
+  ['asset fetch', '📱 scrolling instagram'],
+  ['asset fetch', '🗺 loading google maps'],
+  ['upload sync', '📤 uploading youtube video'],
+  ['upload sync', '☁️ backing up photos'],
+  ['upload sync', '📦 pushing to github'],
+];
+
+const STREAM_ACTIVITIES = [
+  '📺 streaming twitch',
+  '🎬 binge-watching netflix',
+  '🎵 spotify on shuffle',
+  '📹 stuck in a zoom call',
+  '🎥 watching youtube live',
+  '🕹 cloud gaming session',
+];
+
+const PING_ACTIVITIES = [
+  '🏓 checking game ping',
+  '📶 testing the connection',
+  '🩺 is the server alive?',
+];
+
 export class TrafficDirector {
   constructor(engine, topo) {
     this.engine = engine;
@@ -16,7 +47,12 @@ export class TrafficDirector {
     this.ambient = 2;              // 0..10 density
     this._acc = 0;
     this.onSpawnBot = null;        // gfx hook for temporary flood bots
+    this.onActivity = null;        // gfx hook: (host, text, color) → speech bubble
     this.arpCache = new Set();     // host ids that already resolved the gateway MAC
+  }
+
+  announce(host, text, color) {
+    this.onActivity?.(host, text, color);
   }
 
   reset() {
@@ -45,6 +81,7 @@ export class TrafficDirector {
     });
     this.engine.addFlow(conn);
     this.ensureArp(c, () => conn.open());
+    this.announce(c, '🤝 opening a connection', 0x00ff88);
     this.engine.log('— scenario: 3-way handshake → 6 segments → FIN teardown', 'ok');
     return conn;
   }
@@ -56,6 +93,7 @@ export class TrafficDirector {
     });
     this.engine.addFlow(conn);
     this.ensureArp(c, () => conn.open());
+    this.announce(c, '📦 downloading a big file', 0x00ccff);
     this.engine.log('— scenario: bulk transfer — watch slow start open the window', 'ok');
     return conn;
   }
@@ -66,6 +104,7 @@ export class TrafficDirector {
     const flow = new PingFlow(this.engine, c, target);
     this.engine.addFlow(flow);
     this.ensureArp(c, () => flow.open());
+    this.announce(c, pick(PING_ACTIVITIES), 0xfafafa);
     this.engine.log('— scenario: ICMP echo — L3 ping, RTT per reply', 'ok');
     return flow;
   }
@@ -75,6 +114,7 @@ export class TrafficDirector {
     const flow = new TracerouteFlow(this.engine, c, this.topo.web, this.topo.router);
     this.engine.addFlow(flow);
     this.ensureArp(c, () => flow.open());
+    this.announce(c, '🗺 tracing the route', 0xff8866);
     this.engine.log('— scenario: traceroute — TTL=1 dies at router (time-exceeded), TTL=2 lands (port-unreachable)', 'ok');
     return flow;
   }
@@ -122,18 +162,23 @@ export class TrafficDirector {
       const c = pick(this.topo.clients);
       const tx = new DnsTransaction(this.engine, c, this.topo.dns);
       this.engine.addFlow(tx);
-      setTimeoutSim(this.engine, Math.random() * 2.5, () => this.ensureArp(c, () => tx.open()));
+      setTimeoutSim(this.engine, Math.random() * 2.5, () => {
+        this.announce(c, `🔍 resolving ${tx.domain}`, 0xcc66ff);
+        this.ensureArp(c, () => tx.open());
+      });
     }
     this.engine.log(`— scenario: ${count} parallel DNS lookups (UDP/53, retry on timeout)`, 'ok');
   }
 
   stream() {
     const c = pick(this.topo.clients);
+    const activity = pick(STREAM_ACTIVITIES);
     const s = new MediaStream(this.engine, this.topo.media, c, {
-      rate: 14, duration: 25, label: 'video stream',
+      rate: 14, duration: 25, label: activity.replace(/^\S+\s/, ''),
     });
     this.engine.addFlow(s);
     s.open();
+    this.announce(c, activity, 0xff66cc);
     return s;
   }
 
@@ -155,28 +200,35 @@ export class TrafficDirector {
     const r = Math.random();
     const c = pick(this.topo.clients);
     if (r < 0.45) {
+      const [label, activity] = pick(WEB_ACTIVITIES);
       const conn = new TcpConnection(this.engine, c, this.topo.web, {
         bytes: (20 + ((Math.random() * 400) | 0)) * 1024,
-        label: pick(['page load', 'API call', 'asset fetch', 'upload sync']),
+        label,
         dport: pick([80, 443, 443, 8080]),
       });
       this.engine.addFlow(conn);
       this.ensureArp(c, () => conn.open());
+      this.announce(c, activity, 0x00ccff);
     } else if (r < 0.72) {
       const tx = new DnsTransaction(this.engine, c, this.topo.dns);
       this.engine.addFlow(tx);
       this.ensureArp(c, () => tx.open());
+      this.announce(c, `🔍 resolving ${tx.domain}`, 0xcc66ff);
     } else if (r < 0.84) {
       const flow = new PingFlow(this.engine, c, pick([this.topo.web, this.topo.media]), { count: 3 });
       this.engine.addFlow(flow);
       this.ensureArp(c, () => flow.open());
+      this.announce(c, pick(PING_ACTIVITIES), 0xfafafa);
     } else {
+      const activity = pick(STREAM_ACTIVITIES);
       const s = new MediaStream(this.engine, this.topo.media, c, {
         rate: 8 + ((Math.random() * 10) | 0),
         duration: 8 + Math.random() * 14,
+        label: activity.replace(/^\S+\s/, ''),
       });
       this.engine.addFlow(s);
       s.open();
+      this.announce(c, activity, 0xff66cc);
     }
   }
 }

@@ -45,6 +45,7 @@ export class World {
 
     this.ripples = [];
     this.flowArcs = new Map();     // flow -> {line, lastSeen}
+    this.bubbles = new Map();      // host.id -> activity speech bubble
 
     this.hostMeshes = new Map();   // host.id -> {group, mesh, baseEmissive, host}
     this.linkLines = new Map();    // flowKey -> line
@@ -174,6 +175,24 @@ export class World {
     }
   }
 
+  /** Speech bubble over a host: what the "user" is doing in human terms. */
+  showActivity(host, text, color = 0x41a6ff, duration = 5) {
+    const old = this.bubbles.get(host.id);
+    if (old) this._disposeBubble(old);
+    const sprite = makeBubble(text, new THREE.Color(color));
+    const baseY = host.pos.y + (host.kind === 'client' ? 4.6 : host.pos.y * 2 + 4.6);
+    sprite.position.set(host.pos.x, baseY, host.pos.z);
+    this.scene.add(sprite);
+    this.bubbles.set(host.id, { sprite, life: duration, max: duration, baseY, t: Math.random() * 6 });
+  }
+
+  _disposeBubble(b) {
+    this.scene.remove(b.sprite);
+    b.sprite.material.map.dispose();
+    b.sprite.material.dispose();
+    for (const [id, rec] of this.bubbles) if (rec === b) this.bubbles.delete(id);
+  }
+
   /** Remove everything spawned by traffic: bot meshes, flow ribbons, ripples (sim reset). */
   clearDynamic() {
     for (const [id, rec] of [...this.hostMeshes]) {
@@ -195,6 +214,7 @@ export class World {
       r.ring.material.dispose();
     }
     this.ripples = [];
+    for (const b of [...this.bubbles.values()]) this._disposeBubble(b);
   }
 
   /** activity ∈ [0,1] per layer key — drives lane glow. */
@@ -460,6 +480,18 @@ export class World {
       r.ring.material.opacity = 0.85 * (1 - t);
     }
 
+    // activity speech bubbles: bob gently, fade in/out
+    for (const b of [...this.bubbles.values()]) {
+      b.life -= dtReal;
+      if (b.life <= 0) { this._disposeBubble(b); continue; }
+      b.t += dtReal;
+      b.sprite.position.y = b.baseY + Math.sin(b.t * 2.2) * 0.18;
+      const elapsed = b.max - b.life;
+      const fadeIn = Math.min(1, elapsed / 0.35);
+      const fadeOut = Math.min(1, b.life / 0.9);
+      b.sprite.material.opacity = 0.95 * Math.min(fadeIn, fadeOut);
+    }
+
     // flow ribbons fade toward target opacity
     for (const [f, rec] of this.flowArcs) {
       const m = rec.line.material;
@@ -546,6 +578,52 @@ function makePlate(title, sub, color) {
     map: tex, transparent: true, depthWrite: false, opacity: 0.85,
   }));
   sprite.scale.set(13, 2.85, 1);
+  return sprite;
+}
+
+function makeBubble(text, color) {
+  const font = '600 44px Menlo, "Apple Color Emoji", monospace';
+  const meas = document.createElement('canvas').getContext('2d');
+  meas.font = font;
+  const textW = Math.ceil(meas.measureText(text).width);
+  const padX = 36, h = 96, tail = 18;
+  const w = textW + padX * 2;
+
+  const c = document.createElement('canvas');
+  c.width = w;
+  c.height = h + tail;
+  const ctx = c.getContext('2d');
+  const hex = '#' + color.getHexString();
+
+  ctx.fillStyle = 'rgba(6, 13, 28, 0.88)';
+  roundRect(ctx, 3, 3, w - 6, h - 6, 22);
+  ctx.fill();
+  ctx.strokeStyle = hex;
+  ctx.lineWidth = 3;
+  roundRect(ctx, 3, 3, w - 6, h - 6, 22);
+  ctx.stroke();
+  // tail pointing down at the host
+  ctx.beginPath();
+  ctx.moveTo(w / 2 - 12, h - 4);
+  ctx.lineTo(w / 2, h + tail - 2);
+  ctx.lineTo(w / 2 + 12, h - 4);
+  ctx.closePath();
+  ctx.fillStyle = hex;
+  ctx.fill();
+
+  ctx.font = font;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#dcecff';
+  ctx.fillText(text, w / 2, h / 2 - 2);
+
+  const tex = new THREE.CanvasTexture(c);
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: tex, transparent: true, depthWrite: false, opacity: 0,
+  }));
+  const scale = 0.034;                     // world units per canvas px
+  sprite.scale.set(w * scale, (h + tail) * scale, 1);
+  sprite.center.set(0.5, 0.18);            // anchor near the tail tip
   return sprite;
 }
 
