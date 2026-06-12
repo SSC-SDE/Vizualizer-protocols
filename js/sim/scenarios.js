@@ -23,6 +23,15 @@ const WEB_ACTIVITIES = [
   ['upload sync', '📤 uploading youtube video'],
   ['upload sync', '☁️ backing up photos'],
   ['upload sync', '📦 pushing to github'],
+  ['page load', '🍕 ordering pizza online'],
+  ['page load', '🧦 panic-buying socks at 2am'],
+  ['page load', '📚 wikipedia rabbit hole'],
+  ['API call', '🌦 checking weather (again)'],
+  ['API call', '🏦 anxiously checking bank app'],
+  ['API call', '💘 swiping on dating app'],
+  ['asset fetch', '🐱 loading cat pictures'],
+  ['asset fetch', '🍳 finding a recipe, skipping the life story'],
+  ['upload sync', '🤳 posting gym selfie'],
 ];
 
 const STREAM_ACTIVITIES = [
@@ -32,12 +41,55 @@ const STREAM_ACTIVITIES = [
   '📹 stuck in a zoom call',
   '🎥 watching youtube live',
   '🕹 cloud gaming session',
+  '🎙 podcast at 2x speed',
+  '🧘 streaming a meditation app, stressfully',
+  '😱 "you still watching?" ...yes',
+  '🐢 4K stream on hotel wifi',
 ];
 
 const PING_ACTIVITIES = [
   '🏓 checking game ping',
   '📶 testing the connection',
   '🩺 is the server alive?',
+  '😤 blaming lag, not skill',
+  '🔌 wiggling the ethernet cable',
+];
+
+// witty IT jokes, per machine — color matches each server's hue
+const SERVER_QUIPS = [
+  ['web', 0x00ccff, [
+    '🔁 have you tried turning it off and on again?',
+    '🤷 works on my machine',
+    '🐛 it’s not a bug, it’s a feature',
+    '🔥 99 little bugs in the code…',
+    '🫖 418: I’m a teapot',
+    '📜 my logs are write-only',
+    '🧯 prod is just staging with confidence',
+  ]],
+  ['dns', 0xcc66ff, [
+    '☝️ it’s ALWAYS DNS',
+    '🧹 have you tried flushing the cache?',
+    '🤥 TTL stands for Time To Lie',
+    '🌀 I’m not lost, I’m recursive',
+    '🔮 I know where everyone lives',
+    '⏳ propagation takes 24-48 hours (it doesn’t)',
+  ]],
+  ['media', 0xff66cc, [
+    '⏳ buffering builds character',
+    '🧠 lag is a state of mind',
+    '🎞 I stream, therefore I am',
+    '😅 jitter? I barely know her',
+    '🔇 "you’re on mute" — me, all day',
+    '🐌 240p: the cinematic experience',
+  ]],
+  ['router', 0xffcc44, [
+    '🧭 I route, therefore I am',
+    '📦 all your packets are belong to us',
+    '🚌 hop on, hop off',
+    '🪦 TTL hit zero? not my problem',
+    '👑 default gateway, premium attitude',
+    '🚦 dropping packets is self-care',
+  ]],
 ];
 
 export class TrafficDirector {
@@ -49,6 +101,8 @@ export class TrafficDirector {
     this.onSpawnBot = null;        // gfx hook for temporary flood bots
     this.onActivity = null;        // gfx hook: (host, text, color) → speech bubble
     this.arpCache = new Set();     // host ids that already resolved the gateway MAC
+    this._quipIn = 4 + Math.random() * 4;   // countdown to next server joke
+    this._lastQuip = new Map();    // server key -> last joke index (no repeats)
   }
 
   announce(host, text, color) {
@@ -186,6 +240,7 @@ export class TrafficDirector {
 
   update(dt) {
     runSimTimers(this.engine);   // flush deferred scenario timers regardless of density
+    this._quipTick(dt);          // servers crack jokes even when traffic is paused
     if (this.ambient <= 0) return;
     // expected spawns/sec scales with density
     this._acc += dt * (this.ambient * 0.14);
@@ -193,6 +248,17 @@ export class TrafficDirector {
       this._acc -= 1;
       this._spawnRandom();
     }
+  }
+
+  _quipTick(dt) {
+    this._quipIn -= dt;
+    if (this._quipIn > 0) return;
+    this._quipIn = 9 + Math.random() * 9;
+    const [key, color, jokes] = pick(SERVER_QUIPS);
+    let idx = (Math.random() * jokes.length) | 0;
+    if (idx === this._lastQuip.get(key)) idx = (idx + 1) % jokes.length;
+    this._lastQuip.set(key, idx);
+    this.announce(this.topo[key], jokes[idx], color);
   }
 
   _spawnRandom() {

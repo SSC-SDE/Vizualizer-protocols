@@ -15,7 +15,7 @@ export class World {
     this.scene.fog = new THREE.FogExp2(0x04060d, 0.0035);
 
     this.camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 800);
-    this.camera.position.set(34, 26, 48);
+    this.camera.position.set(42, 30, 58);
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
     this.renderer.setSize(innerWidth, innerHeight);
@@ -109,7 +109,7 @@ export class World {
     // a rim-glow halo disc, a slowly counter-rotating dashed ring, and a
     // holographic name plate. Opacity tracks live traffic in the lane
     // (see setLayerActivity), so busy layers visibly light up.
-    const R = 38;
+    const R = 50;
     this.strata = {};
     const defs = [
       { key: 'L2', angle: 2.62 },
@@ -180,7 +180,9 @@ export class World {
     const old = this.bubbles.get(host.id);
     if (old) this._disposeBubble(old);
     const sprite = makeBubble(text, new THREE.Color(color));
-    const baseY = host.pos.y + (host.kind === 'client' ? 4.6 : host.pos.y * 2 + 4.6);
+    const baseY = host.kind === 'client' ? host.pos.y + 4.6
+      : host.kind === 'router' ? host.pos.y + 7
+      : host.pos.y * 2 + 5;             // server rack tops out at pos.y * 2
     sprite.position.set(host.pos.x, baseY, host.pos.z);
     this.scene.add(sprite);
     this.bubbles.set(host.id, { sprite, life: duration, max: duration, baseY, t: Math.random() * 6 });

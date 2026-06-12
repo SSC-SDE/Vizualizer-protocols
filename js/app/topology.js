@@ -3,25 +3,26 @@
 
 import { Host } from '../sim/engine.js';
 
-const N_CLIENTS = 10;
-const CLIENT_HUES = [0x41a6ff, 0x44ddcc, 0x6688ff];
+const N_CLIENTS = 16;
+const CLIENT_HUES = [0x41a6ff, 0x44ddcc, 0x6688ff, 0x88ddff];
 
 export function buildNetwork(engine) {
-  const web = engine.addHost(new Host('WEB-EDGE', '203.0.113.10', 'server', { x: 0, y: 5, z: -2 }));
-  const dns = engine.addHost(new Host('DNS-CORE', '203.0.113.53', 'server', { x: -8.5, y: 3.6, z: 4 }));
-  const media = engine.addHost(new Host('MEDIA-RELAY', '203.0.113.77', 'server', { x: 8.5, y: 4.2, z: 4 }));
-  const router = engine.addHost(new Host('CORE-RTR', '10.0.0.1', 'router', { x: 0, y: 13, z: 6 }));
+  const web = engine.addHost(new Host('WEB-EDGE', '203.0.113.10', 'server', { x: 0, y: 5, z: -10 }));
+  const dns = engine.addHost(new Host('DNS-CORE', '203.0.113.53', 'server', { x: -15, y: 3.6, z: 8 }));
+  const media = engine.addHost(new Host('MEDIA-RELAY', '203.0.113.77', 'server', { x: 15, y: 4.2, z: 8 }));
+  const router = engine.addHost(new Host('CORE-RTR', '10.0.0.1', 'router', { x: 0, y: 13, z: 2 }));
   engine.router = router;            // all IP traffic hops through the core
 
   const clients = [];
   for (let i = 0; i < N_CLIENTS; i++) {
-    const a = (i / N_CLIENTS) * Math.PI * 2;
-    const r = 27 + (i % 3) * 3;
+    // golden-angle stagger so neighbours never sit at the same radius/height
+    const a = (i / N_CLIENTS) * Math.PI * 2 + (i % 2) * 0.18;
+    const r = 34 + (i % 4) * 4;
     clients.push(engine.addHost(new Host(
       `client-${String(i + 1).padStart(2, '0')}`,
       `10.0.0.${i + 11}`,
       'client',
-      { x: Math.cos(a) * r, y: 1.6 + (i % 4) * 1.1, z: Math.sin(a) * r },
+      { x: Math.cos(a) * r, y: 1.6 + (i % 5) * 1.2, z: Math.sin(a) * r },
     )));
   }
 
