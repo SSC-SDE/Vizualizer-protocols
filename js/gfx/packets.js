@@ -43,6 +43,20 @@ export class PacketLayer {
 
   packetAt(instanceId) { return this.slotPkt[instanceId]; }
 
+  /** Instantly clear every tracer, corpse and flash (sim reset). */
+  clear() {
+    for (const rec of this.live.values()) this._freeSlot(rec.slot);
+    this.live.clear();
+    for (const d of this.dying) this._freeSlot(d.slot);
+    this.dying = [];
+    for (const f of this.flashes) {
+      f.sp.visible = false;
+      this.flashPool.push(f.sp);
+    }
+    this.flashes = [];
+    this.mesh.instanceMatrix.needsUpdate = true;
+  }
+
   curveFor(pkt) {
     return flightCurve(pkt.src, pkt.dst, pkt.via, altitudeOf(pkt), laneFor(pkt));
   }

@@ -80,15 +80,18 @@ it never spams. `?guide=1&scn=handshake` autostarts a lesson.
 (watch the backlog gauge fill with half-open connections) · 5 DNS storm ·
 6 UDP stream · 7 ping · 8 traceroute · 9 ARP sweep
 
-Sliders: time scale, wire loss %, ambient traffic density. Space pauses.
-`?scn=download` (etc.) in the URL autostarts a scenario.
+Sliders: time scale, wire loss %, ambient traffic density. Space pauses,
+**R resets** (wipes all traffic, telemetry and flood bots — topology and your
+knob settings survive). `?scn=download` (etc.) in the URL autostarts a scenario.
 
 ## Layout
 
 ```
 js/sim/    engine, tcp, udp, l2l3, scenarios   — pure simulation, zero rendering deps
 js/gfx/    world, packets, paths               — Three.js scene + instanced tracers
-js/ui/     hud, inspector                      — telemetry, dissection, ladder
+js/ui/     hud, inspector, tutor               — telemetry, dissection, ladder, guide
+js/app/    topology, controls                  — network layout + control deck
+js/main.js                                     — bootstrap: build → wire → loop
 ```
 
 The sim layer runs headless — `npm test` soak-tests lossy transfers, floods,

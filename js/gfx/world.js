@@ -174,6 +174,29 @@ export class World {
     }
   }
 
+  /** Remove everything spawned by traffic: bot meshes, flow ribbons, ripples (sim reset). */
+  clearDynamic() {
+    for (const [id, rec] of [...this.hostMeshes]) {
+      if (rec.bot) {
+        this.scene.remove(rec.group);
+        rec.group.traverse(o => { o.geometry?.dispose(); o.material?.dispose?.(); });
+        this.hostMeshes.delete(id);
+      }
+    }
+    for (const [, rec] of this.flowArcs) {
+      this.scene.remove(rec.line);
+      rec.line.geometry.dispose();
+      rec.line.material.dispose();
+    }
+    this.flowArcs.clear();
+    for (const r of this.ripples) {
+      this.scene.remove(r.ring);
+      r.ring.geometry.dispose();
+      r.ring.material.dispose();
+    }
+    this.ripples = [];
+  }
+
   /** activity ∈ [0,1] per layer key — drives lane glow. */
   setLayerActivity(key, v) {
     if (this.strata[key]) this.strata[key].activity = v;

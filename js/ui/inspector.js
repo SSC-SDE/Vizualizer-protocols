@@ -16,6 +16,15 @@ export class Inspector {
     this._lastListRender = 0;
   }
 
+  reset() {
+    this.selected = null;
+    this.pinnedPacket = null;
+    this.modeEl.textContent = '// click a packet, host or flow';
+    this.listEl.innerHTML = '';
+    this.bodyEl.innerHTML = '';
+    this._lastListRender = 0;
+  }
+
   // ---------------- flow list ----------------
 
   updateList() {
@@ -46,6 +55,7 @@ export class Inspector {
   selectFlow(f) {
     this.selected = f;
     this.pinnedPacket = null;
+    this._finalRendered = false;
     this.modeEl.textContent = '// flow';
     this.renderFlow();
   }
@@ -78,8 +88,17 @@ export class Inspector {
   tick() {
     this.updateList();
     if (this.pinnedPacket) return;                 // packet view is a frozen capture
-    if (this.selected && !this.selected.dead) this.renderFlow();
-    else if (this.selected?.dead) { this.selected = null; this.bodyEl.innerHTML = ''; }
+    if (!this.selected) return;
+    if (this.selected.dead) {
+      // flow ended: render its final state once, then freeze until the user picks something else
+      if (!this._finalRendered) {
+        this._finalRendered = true;
+        this.modeEl.textContent = '// flow (ended — frozen)';
+        this.renderFlow();
+      }
+      return;
+    }
+    this.renderFlow();
   }
 
   // ---------------- flow view ----------------
@@ -93,6 +112,7 @@ export class Inspector {
 
   _renderTcp(f) {
     const rows = [
+      ...(f.dead ? [['status', '<span class="warn">flow ended — final state, frozen</span>']] : []),
       ['endpoints', esc(f.name)],
       ['state c/s', `<b>${esc(f.stateStr)}</b>`],
       ['transfer', `${fmtBytes(f.snd_una)} / ${fmtBytes(f.totalBytes)} (${Math.round(f.progress * 100)}%)`],
@@ -121,7 +141,10 @@ export class Inspector {
   }
 
   _renderUdp(f) {
-    const rows = [['endpoints', esc(f.name)], ['state', esc(f.stateStr)]];
+    const rows = [
+      ...(f.dead ? [['status', '<span class="warn">flow ended — final state, frozen</span>']] : []),
+      ['endpoints', esc(f.name)], ['state', esc(f.stateStr)],
+    ];
     if (f.domain) {
       rows.push(['query', `A? ${esc(f.domain)}`]);
       rows.push(['txid', '0x' + f.txid.toString(16)]);

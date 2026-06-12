@@ -158,6 +158,27 @@ export class Engine {
 
   addHost(h) { this.hosts.push(h); return h; }
 
+  /** Wipe all traffic and telemetry. Keeps the topology (bots excluded) and tuning knobs. */
+  reset() {
+    this.time = 0;
+    this.flows = [];
+    this.inFlight = [];
+    this.synBacklog = 0;
+    this.lossBurstUntil = 0;
+    this.hosts = this.hosts.filter(h => h.kind !== 'bot');
+    for (const h of this.hosts) {
+      h.txPackets = h.rxPackets = 0;
+      h.txBytes = h.rxBytes = 0;
+    }
+    this._linkLast?.clear();
+    this.counters = { sent: 0, delivered: 0, dropped: 0, retx: 0, bytes: 0, conns: 0 };
+    this._win = { delivered: 0, dropped: 0, retx: 0, bytes: 0 };
+    this._nextSample = 0;
+    const s = this.series;
+    s.mbps.fill(0); s.pps.fill(0); s.dps.fill(0); s.rps.fill(0);
+    s.head = 0;
+  }
+
   addFlow(f) {
     this.flows.push(f);
     this.counters.conns++;

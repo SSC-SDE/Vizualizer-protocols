@@ -19,6 +19,12 @@ export class TrafficDirector {
     this.arpCache = new Set();     // host ids that already resolved the gateway MAC
   }
 
+  reset() {
+    this.arpCache.clear();
+    this._acc = 0;
+    clearSimTimers();
+  }
+
   /** Resolve gateway MAC first (once per host), then run the flow. Real stacks do exactly this. */
   ensureArp(host, then) {
     const gw = this.topo.router;
@@ -180,6 +186,7 @@ const timers = [];
 function setTimeoutSim(engine, delay, fn) {
   timers.push({ at: engine.time + delay, fn });
 }
+export function clearSimTimers() { timers.length = 0; }
 function runSimTimers(engine) {
   for (let i = timers.length - 1; i >= 0; i--) {
     if (engine.time >= timers[i].at) {

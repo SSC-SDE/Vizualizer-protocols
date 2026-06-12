@@ -249,6 +249,15 @@ export class Tutor {
     this.engine.log('🎓 guide mode off', '');
   }
 
+  onReset() {
+    this.follow = null;
+    this.queue = [];
+    this._floodWarned = false;
+    this._lastDropCard = 0;
+    if (this.waiting) this._continue();
+    if (this.enabled) this._show('welcome');
+  }
+
   // ---------------- event intake ----------------
 
   onScenario(name, flow) {
