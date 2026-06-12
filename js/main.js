@@ -7,6 +7,7 @@ import { World } from './gfx/world.js';
 import { PacketLayer } from './gfx/packets.js';
 import { Hud } from './ui/hud.js';
 import { Inspector } from './ui/inspector.js';
+import { Tutor } from './ui/tutor.js';
 
 // ---------------- topology ----------------
 
@@ -54,9 +55,10 @@ engine.onSend = (pkt) => {
   packets.onSend(pkt);
   world.pulseHost(pkt.src, 0.5);
   if (pkt.kind === KIND.ARP_REQ) world.spawnRipple(pkt.src.pos);     // L2 broadcast hits the segment
+  tutor.onSend(pkt);
 };
 engine.onDeliver = (pkt) => { packets.onDeliver(pkt); world.pulseHost(pkt.dst, 0.7); };
-engine.onDrop = (pkt) => packets.onDrop(pkt);
+engine.onDrop = (pkt) => { packets.onDrop(pkt); tutor.onDrop(pkt); };
 
 // flow ribbons under active transport flows
 setInterval(() => world.syncFlowArcs(engine.flows, router), 500);
@@ -84,36 +86,52 @@ let timeScale = 1;
 const $ = (id) => document.getElementById(id);
 
 $('btn-pause').onclick = togglePause;
-function togglePause() {
-  paused = !paused;
+function togglePause() { setPaused(!paused); }
+function setPaused(v) {
+  paused = v;
   $('btn-pause').textContent = paused ? '▶ resume' : '⏸ pause';
   $('btn-pause').classList.toggle('active', paused);
 }
 
-$('sl-speed').oninput = (e) => {
-  timeScale = Number(e.target.value);
-  $('sl-speed-v').textContent = timeScale.toFixed(1) + '×';
-};
+function setSpeed(v) {
+  timeScale = v;
+  $('sl-speed').value = v;
+  $('sl-speed-v').textContent = v.toFixed(1) + '×';
+}
+function setAmbient(v) {
+  director.ambient = v;
+  $('sl-ambient').value = v;
+  $('sl-ambient-v').textContent = String(v);
+}
+
+$('sl-speed').oninput = (e) => setSpeed(Number(e.target.value));
 $('sl-loss').oninput = (e) => {
   engine.lossRate = Number(e.target.value) / 100;
   $('sl-loss-v').textContent = e.target.value + '%';
 };
-$('sl-ambient').oninput = (e) => {
-  director.ambient = Number(e.target.value);
-  $('sl-ambient-v').textContent = e.target.value;
-};
+$('sl-ambient').oninput = (e) => setAmbient(Number(e.target.value));
+
+const tutor = new Tutor(engine, {
+  setPaused, setSpeed, setAmbient,
+  getSpeed: () => timeScale,
+  getAmbient: () => director.ambient,
+});
 
 const scenarios = {
-  handshake: () => inspector.selectFlow(director.handshake()),
-  download: () => inspector.selectFlow(director.download()),
-  lossburst: () => director.lossBurst(),
-  synflood: () => director.synFlood(),
-  dnsstorm: () => director.dnsStorm(),
-  stream: () => inspector.selectFlow(director.stream()),
-  ping: () => inspector.selectFlow(director.ping()),
-  traceroute: () => inspector.selectFlow(director.traceroute()),
+  handshake: () => follow('handshake', director.handshake()),
+  download: () => follow('download', director.download()),
+  lossburst: () => { director.lossBurst(); tutor.onScenario('lossburst', null); },
+  synflood: () => { director.synFlood(); tutor.onScenario('synflood', null); },
+  dnsstorm: () => { director.dnsStorm(); },
+  stream: () => follow('stream', director.stream()),
+  ping: () => follow('ping', director.ping()),
+  traceroute: () => follow('traceroute', director.traceroute()),
   arp: () => director.arpSweep(),
 };
+function follow(name, flow) {
+  inspector.selectFlow(flow);
+  tutor.onScenario(name, flow);
+}
 document.querySelectorAll('[data-scn]').forEach(btn => {
   btn.onclick = () => scenarios[btn.dataset.scn]();
 });
@@ -121,6 +139,7 @@ const keyMap = ['handshake', 'download', 'lossburst', 'synflood', 'dnsstorm', 's
 addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT') return;
   if (e.code === 'Space') { e.preventDefault(); togglePause(); }
+  if (e.key === 'g' || e.key === 'G') tutor.toggle();
   const i = Number(e.key) - 1;
   if (i >= 0 && i < keyMap.length) scenarios[keyMap[i]]();
 });
@@ -131,8 +150,10 @@ const clock = new THREE.Clock();
 engine.log('⏚ WIREDEPTH online — 1-6 fire scenarios, click any packet mid-flight', 'ok');
 engine.log('ambient traffic warming up…', '');
 
-// ?scn=handshake|download|lossburst|synflood|dnsstorm|stream — autostart for demos
-const scnParam = new URLSearchParams(location.search).get('scn');
+// ?scn=handshake|...&guide=1 — autostart for demos
+const params = new URLSearchParams(location.search);
+if (params.get('guide')) tutor.enable();
+const scnParam = params.get('scn');
 if (scnParam && scenarios[scnParam]) setTimeout(() => scenarios[scnParam](), 800);
 
 function frame() {
@@ -147,6 +168,7 @@ function frame() {
   world.update(dtReal);
   hud.update();
   inspector.tick();
+  tutor.update(dtReal);
   world.render();
 }
 frame();

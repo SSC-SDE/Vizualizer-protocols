@@ -37,6 +37,7 @@
 <!-- ===== Bottom: control deck ===== -->
 <div class="panel hud-controls" id="hud-controls">
   <div class="ctl-group">
+    <button id="btn-guide" title="key G">🎓 guide</button>
     <button id="btn-pause" title="space">⏸ pause</button>
     <label>time <input type="range" id="sl-speed" min="0.1" max="4" step="0.1" value="1"><span id="sl-speed-v">1.0×</span></label>
     <label>loss <input type="range" id="sl-loss" min="0" max="30" step="1" value="2"><span id="sl-loss-v">2%</span></label>
@@ -54,6 +55,21 @@
     <button data-scn="arp" title="key 9">9 · ARP sweep</button>
   </div>
   <div class="ctl-group legend" id="legend"></div>
+</div>
+
+<!-- ===== Guide mode narrator ===== -->
+<div class="panel hud-tutor" id="hud-tutor" hidden>
+  <div class="tutor-head">
+    <span class="tutor-chip" id="tutor-chip">GUIDE</span>
+    <span class="tutor-title" id="tutor-title"></span>
+    <button class="tutor-exit" id="tutor-exit" title="exit guide mode">✕</button>
+  </div>
+  <div id="tutor-body"></div>
+  <div class="tutor-foot">
+    <label><input type="checkbox" id="tutor-steppause"> pause at each step</label>
+    <button id="tutor-continue" hidden>▶ continue</button>
+    <span class="dim" id="tutor-progress"></span>
+  </div>
 </div>
 
 <!-- ===== Event ticker ===== -->

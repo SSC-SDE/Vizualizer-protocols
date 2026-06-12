@@ -59,6 +59,17 @@ global + burst loss rates, per-link byte/packet accounting.
   dup-ACK and recovery state, and a wire ladder diagram (lost segments marked ✕).
 - **Any host** → traffic counters and active flows.
 
+## 🎓 Guide mode (key G)
+
+Spoon-fed learning: hit **G** (or the 🎓 button) and the narrator takes over —
+time slows to 0.5×, background traffic is muted, and a card at the bottom
+explains every packet of the flow you fire, step by step, in plain language:
+SYN ("can we talk?"), slow start, duplicate ACKs, fast retransmit vs RTO, the
+four-step goodbye, ARP broadcasts, traceroute's TTL trick, and so on. Tick
+**pause at each step** and the sim freezes on every new card until you press
+continue — read at your own pace. Each concept is explained once per flow, so
+it never spams. `?guide=1&scn=handshake` autostarts a lesson.
+
 ## Scenarios (keys 1–9)
 
 1 handshake · 2 file transfer · 3 loss burst (35% for 6 s) · 4 SYN flood
