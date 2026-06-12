@@ -65,6 +65,38 @@ html, body {
 .stat-grid .v { color: var(--fg); font-variant-numeric: tabular-nums; }
 
 .chart-label { color: var(--dim); font-size: 10px; margin: 2px 0 8px; }
+
+/* layer activity meter */
+#layer-meter { margin: 2px 0 2px; }
+.lm-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 16px;
+  font-size: 10px;
+}
+.lm-name { width: 104px; white-space: nowrap; }
+.lm-track {
+  flex: 1;
+  height: 6px;
+  background: rgba(20, 40, 80, 0.6);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.lm-fill {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: 3px;
+  box-shadow: 0 0 6px currentColor;
+  transition: none;
+}
+.lm-count {
+  width: 22px;
+  text-align: right;
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+}
 #chart-throughput, #chart-pps, #chart-cwnd {
   width: 100%;
   border: 1px solid rgba(64, 160, 255, 0.12);

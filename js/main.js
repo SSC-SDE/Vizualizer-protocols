@@ -1,7 +1,7 @@
 // WIREDEPTH — boot, topology, wiring, render loop.
 
 import * as THREE from 'three';
-import { Engine, Host, KIND } from './sim/engine.js';
+import { Engine, Host, KIND, layerOf } from './sim/engine.js';
 import { TrafficDirector } from './sim/scenarios.js';
 import { World } from './gfx/world.js';
 import { PacketLayer } from './gfx/packets.js';
@@ -156,6 +156,8 @@ if (params.get('guide')) tutor.enable();
 const scnParam = params.get('scn');
 if (scnParam && scenarios[scnParam]) setTimeout(() => scenarios[scnParam](), 800);
 
+const layerCounts = { L2: 0, L3: 0, L4_UDP: 0, L4_TCP: 0 };
+
 function frame() {
   requestAnimationFrame(frame);
   const dtReal = Math.min(clock.getDelta(), 0.1);
@@ -164,6 +166,13 @@ function frame() {
     engine.update(dt);
     director.update(dt);
   }
+
+  // live per-lane occupancy → strata glow + HUD meter
+  layerCounts.L2 = layerCounts.L3 = layerCounts.L4_UDP = layerCounts.L4_TCP = 0;
+  for (const p of engine.inFlight) layerCounts[layerOf(p)]++;
+  for (const k in layerCounts) world.setLayerActivity(k, Math.min(1, layerCounts[k] / 10));
+  hud.layerCounts = layerCounts;
+
   packets.update(engine.time, paused ? 0 : dtReal * timeScale);
   world.update(dtReal);
   hud.update();

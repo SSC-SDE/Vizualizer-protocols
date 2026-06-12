@@ -14,7 +14,11 @@ No build step, no dependencies to install — Three.js loads from CDN via import
 
 ## The airspace is the OSI model
 
-Altitude = layer. Each lane has a faint reference ring:
+Altitude = layer. Each lane is a living stratum: a rim-glow halo with a
+counter-rotating dashed orbit and a holographic name plate, stitched together
+by a vertical OSI axis ruler. The strata are traffic-reactive — a lane
+brightens when packets fly in it and dims when idle, and the stats panel
+mirrors this with a live packets-in-flight meter per lane:
 
 | Lane | Protocol | What flies there |
 |------|----------|------------------|

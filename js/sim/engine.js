@@ -34,6 +34,20 @@ export const KIND_COLOR = {
 
 export const MSS = 1460;
 
+/** OSI lane a packet flies in. Traceroute probes live with their ICMP replies. */
+export function layerOf(pkt) {
+  if (pkt.proto === 'ARP') return 'L2';
+  if (pkt.proto === 'ICMP' || pkt.kind === KIND.PROBE) return 'L3';
+  return pkt.proto === 'TCP' ? 'L4_TCP' : 'L4_UDP';
+}
+
+export const LAYER_META = {
+  L2: { color: 0x9dff57, name: 'LAYER 2 · LINK', sub: 'Ethernet · ARP' },
+  L3: { color: 0xff8866, name: 'LAYER 3 · NETWORK', sub: 'IPv4 · ICMP' },
+  L4_UDP: { color: 0xcc66ff, name: 'LAYER 4 · TRANSPORT', sub: 'UDP datagrams' },
+  L4_TCP: { color: 0x00ccff, name: 'LAYER 4 · TRANSPORT', sub: 'TCP streams' },
+};
+
 let _hostId = 0;
 function genMac() {
   // locally administered unicast

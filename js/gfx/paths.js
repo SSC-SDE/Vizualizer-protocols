@@ -3,7 +3,7 @@
 // through the core router apex. One source of truth for packets + flow ribbons.
 
 import * as THREE from 'three';
-import { KIND } from '../sim/engine.js';
+import { layerOf } from '../sim/engine.js';
 
 export const LAYER_ALT = {
   L2: 1.3,      // ARP — link layer, hugs the grid
@@ -12,12 +12,7 @@ export const LAYER_ALT = {
   L4_TCP: 17.5, // connection-oriented streams, top lane
 };
 
-export function layerOf(pkt) {
-  if (pkt.proto === 'ARP') return 'L2';
-  if (pkt.proto === 'ICMP') return 'L3';
-  if (pkt.kind === KIND.PROBE) return 'L3';   // traceroute probes live with their replies
-  return pkt.proto === 'TCP' ? 'L4_TCP' : 'L4_UDP';
-}
+export { layerOf };
 
 export function altitudeOf(pkt) { return LAYER_ALT[layerOf(pkt)]; }
 

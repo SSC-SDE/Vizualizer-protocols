@@ -1,6 +1,8 @@
 // Stats panel, telemetry charts, legend, event ticker.
 
-import { KIND_COLOR } from '../sim/engine.js';
+import { KIND_COLOR, LAYER_META } from '../sim/engine.js';
+
+const LAYER_ORDER = ['L4_TCP', 'L4_UDP', 'L3', 'L2'];   // top of the stack first, like the OSI model
 
 export class Hud {
   constructor(engine) {
@@ -9,8 +11,31 @@ export class Hud {
     this.ticker = document.getElementById('ticker');
     this.cThroughput = document.getElementById('chart-throughput');
     this.cPps = document.getElementById('chart-pps');
+    this.layerCounts = null;          // fed by main loop
+    this._layerShown = { L2: 0, L3: 0, L4_UDP: 0, L4_TCP: 0 };
     this._buildLegend();
+    this._buildLayerMeter();
     engine.onLog = (text, cls) => this.log(text, cls);
+  }
+
+  _buildLayerMeter() {
+    const wrap = document.getElementById('layer-meter');
+    this._layerBars = {};
+    for (const key of LAYER_ORDER) {
+      const m = LAYER_META[key];
+      const hex = '#' + m.color.toString(16).padStart(6, '0');
+      const row = document.createElement('div');
+      row.className = 'lm-row';
+      row.innerHTML =
+        `<span class="lm-name" style="color:${hex}">${m.sub}</span>` +
+        `<span class="lm-track"><span class="lm-fill" style="background:${hex}"></span></span>` +
+        `<span class="lm-count">0</span>`;
+      wrap.appendChild(row);
+      this._layerBars[key] = {
+        fill: row.querySelector('.lm-fill'),
+        count: row.querySelector('.lm-count'),
+      };
+    }
   }
 
   _buildLegend() {
@@ -56,6 +81,20 @@ export class Hud {
 
     this._drawThroughput();
     this._drawPps();
+    this._updateLayerMeter();
+  }
+
+  _updateLayerMeter() {
+    if (!this.layerCounts) return;
+    for (const key of LAYER_ORDER) {
+      const n = this.layerCounts[key];
+      // smooth so the bars breathe instead of flicker
+      this._layerShown[key] += (n - this._layerShown[key]) * 0.15;
+      const v = this._layerShown[key];
+      const bar = this._layerBars[key];
+      bar.fill.style.width = Math.min(100, (v / 12) * 100).toFixed(1) + '%';
+      bar.count.textContent = String(n);
+    }
   }
 
   _series(arr, head, n) {

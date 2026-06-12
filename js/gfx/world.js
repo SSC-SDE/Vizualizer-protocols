@@ -6,6 +6,7 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { flightCurve, LAYER_ALT } from './paths.js';
+import { LAYER_META } from '../sim/engine.js';
 
 export class World {
   constructor(container) {
@@ -40,7 +41,7 @@ export class World {
     this._lights();
     this._floor();
     this._stars();
-    this._layerRings();
+    this._layerStrata();
 
     this.ripples = [];
     this.flowArcs = new Map();     // flow -> {line, lastSeen}
@@ -102,33 +103,80 @@ export class World {
     this.scene.add(new THREE.Points(g, m));
   }
 
-  _layerRings() {
-    // faint altitude rings labelling the OSI airspace lanes
-    const layers = [
-      { alt: LAYER_ALT.L2, color: 0x9dff57, label: 'L2 · LINK / ARP' },
-      { alt: LAYER_ALT.L3, color: 0xff8866, label: 'L3 · NETWORK / ICMP' },
-      { alt: LAYER_ALT.L4_UDP, color: 0xcc66ff, label: 'L4 · UDP' },
-      { alt: LAYER_ALT.L4_TCP, color: 0x00ccff, label: 'L4 · TCP' },
+  _layerStrata() {
+    // The OSI airspace, made legible: each lane is a living stratum —
+    // a rim-glow halo disc, a slowly counter-rotating dashed ring, and a
+    // holographic name plate. Opacity tracks live traffic in the lane
+    // (see setLayerActivity), so busy layers visibly light up.
+    const R = 38;
+    this.strata = {};
+    const defs = [
+      { key: 'L2', angle: 2.62 },
+      { key: 'L3', angle: 2.62 },
+      { key: 'L4_UDP', angle: 2.62 },
+      { key: 'L4_TCP', angle: 2.62 },
     ];
-    const R = 36;
-    for (const l of layers) {
-      const pts = [];
-      for (let i = 0; i <= 96; i++) {
-        const a = (i / 96) * Math.PI * 2;
-        pts.push(new THREE.Vector3(Math.cos(a) * R, l.alt, Math.sin(a) * R));
-      }
-      const geo = new THREE.BufferGeometry().setFromPoints(pts);
-      const line = new THREE.Line(geo, new THREE.LineBasicMaterial({
-        color: l.color, transparent: true, opacity: 0.10,
-      }));
-      this.scene.add(line);
+    const haloTex = makeRimTexture();
 
-      const sprite = this._label(l.label + '\n', l.color, 0);
-      sprite.position.set(R * 0.78, l.alt + 0.9, -R * 0.62);
-      sprite.scale.set(7, 1.75, 1);
-      sprite.material.opacity = 0.5;
-      this.scene.add(sprite);
+    for (const d of defs) {
+      const meta = LAYER_META[d.key];
+      const alt = LAYER_ALT[d.key];
+      const color = new THREE.Color(meta.color);
+      const group = new THREE.Group();
+
+      // rim halo disc — glow lives at the edge, center stays clear
+      const halo = new THREE.Mesh(
+        new THREE.CircleGeometry(R, 72),
+        new THREE.MeshBasicMaterial({
+          map: haloTex, color, transparent: true, opacity: 0.05,
+          blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+        }),
+      );
+      halo.rotation.x = -Math.PI / 2;
+      halo.position.y = alt;
+      group.add(halo);
+
+      // solid hairline ring at the rim
+      const rim = circleLine(R, alt, color, 0.16);
+      group.add(rim);
+
+      // dashed orbit ring just inside, counter-rotating — gives each lane motion
+      const dash = circleLine(R - 1.6, alt, color, 0.22, true);
+      group.add(dash);
+
+      // holographic name plate at the rim
+      const plate = makePlate(meta.name, meta.sub, color);
+      plate.position.set(Math.cos(d.angle) * (R + 1), alt + 1.7, Math.sin(d.angle) * (R + 1));
+      group.add(plate);
+
+      this.scene.add(group);
+      this.strata[d.key] = { halo, rim, dash, plate, activity: 0, shown: 0, dashDir: alt % 2 < 1 ? 1 : -1 };
     }
+
+    // vertical OSI axis ruler stitching the strata together
+    const ax = new THREE.Vector3(Math.cos(2.62) * R, 0, Math.sin(2.62) * R);
+    const spine = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(ax.x, 0, ax.z),
+        new THREE.Vector3(ax.x, LAYER_ALT.L4_TCP + 3, ax.z),
+      ]),
+      new THREE.LineBasicMaterial({ color: 0x41a6ff, transparent: true, opacity: 0.28 }),
+    );
+    this.scene.add(spine);
+    for (const key of Object.keys(LAYER_META)) {
+      const node = new THREE.Mesh(
+        new THREE.SphereGeometry(0.34, 12, 10),
+        new THREE.MeshBasicMaterial({ color: LAYER_META[key].color, toneMapped: false }),
+      );
+      node.position.set(ax.x, LAYER_ALT[key], ax.z);
+      this.scene.add(node);
+      this.strata[key].node = node;
+    }
+  }
+
+  /** activity ∈ [0,1] per layer key — drives lane glow. */
+  setLayerActivity(key, v) {
+    if (this.strata[key]) this.strata[key].activity = v;
   }
 
   spawnRipple(pos, color = 0x9dff57) {
@@ -361,6 +409,18 @@ export class World {
       }
     }
 
+    // layer strata: dashed rings drift, lanes glow with live traffic
+    for (const s of Object.values(this.strata)) {
+      s.dash.rotation.y += dtReal * 0.12 * s.dashDir;
+      s.shown += (s.activity - s.shown) * Math.min(1, dtReal * 3);
+      const a = s.shown;
+      s.halo.material.opacity = 0.04 + a * 0.16;
+      s.rim.material.opacity = 0.14 + a * 0.5;
+      s.dash.material.opacity = 0.18 + a * 0.6;
+      s.plate.material.opacity = 0.55 + a * 0.45;
+      s.node.scale.setScalar(1 + a * 1.3);
+    }
+
     // ARP ripples
     for (let i = this.ripples.length - 1; i >= 0; i--) {
       const r = this.ripples[i];
@@ -398,6 +458,82 @@ export class World {
     this.renderer.setSize(innerWidth, innerHeight);
     this.composer.setSize(innerWidth, innerHeight);
   }
+}
+
+function circleLine(radius, alt, color, opacity, dashed = false) {
+  const pts = [];
+  for (let i = 0; i <= 128; i++) {
+    const a = (i / 128) * Math.PI * 2;
+    pts.push(new THREE.Vector3(Math.cos(a) * radius, 0, Math.sin(a) * radius));
+  }
+  const geo = new THREE.BufferGeometry().setFromPoints(pts);
+  const mat = dashed
+    ? new THREE.LineDashedMaterial({ color, transparent: true, opacity, dashSize: 1.6, gapSize: 2.4 })
+    : new THREE.LineBasicMaterial({ color, transparent: true, opacity });
+  const line = new THREE.Line(geo, mat);
+  if (dashed) line.computeLineDistances();
+  line.position.y = alt;
+  return line;
+}
+
+function makeRimTexture() {
+  // transparent center, glow band at the rim
+  const c = document.createElement('canvas');
+  c.width = c.height = 256;
+  const ctx = c.getContext('2d');
+  const g = ctx.createRadialGradient(128, 128, 0, 128, 128, 128);
+  g.addColorStop(0.0, 'rgba(255,255,255,0)');
+  g.addColorStop(0.72, 'rgba(255,255,255,0)');
+  g.addColorStop(0.88, 'rgba(255,255,255,0.55)');
+  g.addColorStop(0.97, 'rgba(255,255,255,0.25)');
+  g.addColorStop(1.0, 'rgba(255,255,255,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 256, 256);
+  return new THREE.CanvasTexture(c);
+}
+
+function makePlate(title, sub, color) {
+  const c = document.createElement('canvas');
+  c.width = 1024; c.height = 224;
+  const ctx = c.getContext('2d');
+  const hex = '#' + color.getHexString();
+  // plate background
+  ctx.fillStyle = 'rgba(4, 10, 24, 0.78)';
+  roundRect(ctx, 8, 8, 1008, 208, 26);
+  ctx.fill();
+  ctx.strokeStyle = hex;
+  ctx.lineWidth = 5;
+  roundRect(ctx, 8, 8, 1008, 208, 26);
+  ctx.stroke();
+  // accent bar
+  ctx.fillStyle = hex;
+  ctx.fillRect(8, 8, 14, 208);
+  // text
+  ctx.font = 'bold 64px Menlo, monospace';
+  ctx.fillStyle = hex;
+  ctx.shadowColor = hex;
+  ctx.shadowBlur = 16;
+  ctx.fillText(title, 56, 92);
+  ctx.shadowBlur = 0;
+  ctx.font = '46px Menlo, monospace';
+  ctx.fillStyle = 'rgba(170, 205, 240, 0.85)';
+  ctx.fillText(sub, 56, 168);
+  const tex = new THREE.CanvasTexture(c);
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: tex, transparent: true, depthWrite: false, opacity: 0.85,
+  }));
+  sprite.scale.set(13, 2.85, 1);
+  return sprite;
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
 }
 
 function makeRadialTexture(color, alpha) {
