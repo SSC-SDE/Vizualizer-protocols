@@ -72,8 +72,12 @@ export class RolePlayDirector {
     this.onEnter = null;
     this.onExit = null;
 
+    this.role = 'client';
     this.lastFeedback = '';        // short line shown under the deck
   }
+
+  actionKinds() { return ACTION_KINDS; }
+  whoOptions() { return WHO_OPTIONS; }
 
   // ---------------------------------------------------------------- lifecycle
 
@@ -120,6 +124,7 @@ export class RolePlayDirector {
     this.inspector?.setRolePlay?.(false);
     this.engine.lossBurstUntil = 0;
     this.world?.unmarkPlayer?.();
+    this.world?.clearFocus?.();
     this.engine.log('■ role-play ended — back to ambient mode', '');
     this.onExit?.();
     this.onState?.();

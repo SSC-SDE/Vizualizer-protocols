@@ -96,6 +96,7 @@ export class ServerRolePlayDirector {
     this.inspector?.setFlowFilter?.(null);
     this.inspector?.setRolePlay?.(false);
     this.world?.unmarkPlayer?.();
+    this.world?.clearFocus?.();
     this.engine.log('■ server role-play ended', '');
     this.onExit?.();
     this.onState?.();

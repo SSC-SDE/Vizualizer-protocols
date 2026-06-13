@@ -258,6 +258,12 @@ export class World {
     this._focusTarget = new THREE.Vector3(host.pos.x, host.pos.y + 1, host.pos.z);
   }
 
+  /** Return the camera to the scene centre and resume the idle orbit. */
+  clearFocus() {
+    this._focusTarget = new THREE.Vector3(0, 6, 0);
+    this.controls.autoRotate = true;
+  }
+
   spawnRipple(pos, color = 0x9dff57) {
     // expanding floor ring — ARP broadcast hitting the segment
     const geo = new THREE.RingGeometry(0.9, 1.05, 48);
