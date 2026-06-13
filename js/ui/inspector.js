@@ -2,18 +2,23 @@
 // byte-for-byte with a real IPv4 checksum), hover-linked hex dump, per-connection
 // congestion chart and a wire ladder diagram.
 
-import { KIND_COLOR, KIND, MSS } from '../sim/engine.js';
+import { KIND_COLOR, KIND, MSS, Packet } from '../sim/engine.js';
 import { fmtBytes } from './hud.js';
 
 export class Inspector {
   constructor(engine) {
     this.engine = engine;
     this.listEl = document.getElementById('flow-list');
+    this.tabsEl = document.getElementById('inspector-tabs');
     this.bodyEl = document.getElementById('inspector-body');
     this.modeEl = document.getElementById('inspector-mode');
     this.selected = null;        // flow
     this.pinnedPacket = null;
     this.flowFilter = null;      // role-play: restrict the flow list to the player's flows
+    this.rpMode = false;         // role-play: show flow / datagram tabs
+    this.tab = 'flow';           // active tab when rpMode
+    this.ladderPinned = null;    // packet dissected from a clicked ladder row — persists
+    this._ladderRows = null;     // hit-test geometry for the wire ladder
     this._lastListRender = 0;
   }
 
@@ -21,6 +26,36 @@ export class Inspector {
   setFlowFilter(fn) {
     this.flowFilter = fn;
     this._lastListRender = 0;    // force an immediate re-render
+  }
+
+  /** Toggle the role-play flow/datagram tabs. */
+  setRolePlay(on) {
+    this.rpMode = on;
+    this.tab = 'flow';
+    this.ladderPinned = null;
+    this._renderTabs();
+  }
+
+  _renderTabs() {
+    if (!this.tabsEl) return;
+    if (!this.rpMode) { this.tabsEl.hidden = true; return; }
+    this.tabsEl.hidden = false;
+    this.tabsEl.innerHTML =
+      `<button class="insp-tab ${this.tab === 'flow' ? 'on' : ''}" data-tab="flow">flow</button>` +
+      `<button class="insp-tab ${this.tab === 'datagram' ? 'on' : ''}" data-tab="datagram">datagram</button>`;
+    this.tabsEl.querySelectorAll('[data-tab]').forEach((b) => b.onclick = () => this._setTab(b.dataset.tab));
+  }
+
+  _setTab(tab) {
+    this.tab = tab;
+    this._renderTabs();
+    if (tab === 'datagram') this._renderDatagram();
+    else if (this.selected) this.renderFlow();
+  }
+
+  _renderDatagram() {
+    if (this.ladderPinned) this.renderPacket(this.ladderPinned, this.bodyEl);
+    else this.bodyEl.innerHTML = '<div class="dim" style="padding:14px 4px">Click any row in the wire ladder (or one of your packets in the scene) to dissect the datagram — headers, hex and payload. It stays pinned here.</div>';
   }
 
   reset() {
@@ -66,10 +101,18 @@ export class Inspector {
     this.pinnedPacket = null;
     this._finalRendered = false;
     this.modeEl.textContent = '// flow';
+    if (this.rpMode && this.tab === 'datagram') return;   // keep the pinned datagram visible
     this.renderFlow();
   }
 
   showPacket(pkt) {
+    if (this.rpMode) {
+      // feed the persistent datagram tab instead of clobbering the flow view
+      this.ladderPinned = pkt;
+      this.selected = pkt.flow || this.selected;
+      this._setTab('datagram');
+      return;
+    }
     this.pinnedPacket = pkt;
     this.selected = pkt.flow;
     this.modeEl.textContent = '// packet (frozen at capture)';
@@ -96,6 +139,8 @@ export class Inspector {
   // periodic refresh of live flow view
   tick() {
     this.updateList();
+    this._renderTabs();
+    if (this.rpMode && this.tab === 'datagram') return;   // frozen datagram — set on click
     if (this.pinnedPacket) return;                 // packet view is a frozen capture
     if (!this.selected) return;
     if (this.selected.dead) {
@@ -147,6 +192,7 @@ export class Inspector {
     `;
     this._drawCwnd(f);
     this._drawLadder(f);
+    this._wireLadder();
   }
 
   _renderUdp(f) {
@@ -187,6 +233,49 @@ export class Inspector {
       <canvas id="ladder" width="356" height="300"></canvas>
     `;
     this._drawLadder(f);
+    this._wireLadder();
+  }
+
+  // ---------------- wire ladder → datagram dissection (role-play) ----------------
+
+  _wireLadder() {
+    if (!this.rpMode) return;
+    const cnv = document.getElementById('ladder');
+    if (!cnv) return;
+    cnv.style.cursor = 'pointer';
+    cnv.title = 'click a row to dissect that datagram';
+    cnv.onclick = (e) => this._onLadderClick(e, cnv);
+  }
+
+  _onLadderClick(e, cnv) {
+    if (!this._ladderRows || !this._ladderFlow) return;
+    const rect = cnv.getBoundingClientRect();
+    const y = (e.clientY - rect.top) * (cnv.height / rect.height);
+    const row = this._ladderRows.find(r => y >= r.y0 && y <= r.y1);
+    if (!row) return;
+    this.ladderPinned = this._packetFromLadder(this._ladderFlow, row.ev);
+    this._setTab('datagram');
+  }
+
+  /** Rebuild a Packet from a flow + one of its history events, for dissection. */
+  _packetFromLadder(f, ev) {
+    const c2s = ev.dir === 'c2s';
+    const src = c2s ? f.client : f.server;
+    const dst = c2s ? f.server : f.client;
+    const flags = {};
+    String(ev.flags || '').split(',').forEach(s => { const k = s.trim(); if (k && k !== '·') flags[k] = 1; });
+    const p = new Packet({
+      src, dst, proto: f.proto, kind: ev.kind, flags,
+      seq: ev.seq ?? 0, ackNo: ev.ack ?? 0, len: ev.len ?? 0, flow: f,
+      sport: c2s ? (f.sport ?? 0) : (f.dport ?? 0),
+      dport: c2s ? (f.dport ?? 0) : (f.sport ?? 0),
+    });
+    p.lost = !!ev.lost;
+    if (f.proto === 'ICMP') {
+      p.icmpType = ev.kind === KIND.ECHO_REQ ? 8 : ev.kind === KIND.ECHO_REP ? 0 : ev.kind === KIND.TTL_EXC ? 11 : 3;
+      p.icmpId = f.icmpId ?? 0;
+    }
+    return p;
   }
 
   _drawCwnd(f) {
@@ -244,8 +333,11 @@ export class Inspector {
     const events = f.history.slice(-24);
     const rowH = (H - 26) / Math.max(1, events.length);
     const slant = Math.min(rowH * 0.7, 10);
+    this._ladderRows = [];
+    this._ladderFlow = f;
     events.forEach((ev, i) => {
       const yTop = 20 + i * rowH;
+      this._ladderRows.push({ y0: yTop - rowH * 0.5, y1: yTop + rowH * 0.5, ev });
       const c2s = ev.dir === 'c2s';
       const x1 = c2s ? Lx : Rx, x2 = c2s ? Rx : Lx;
       const color = '#' + (KIND_COLOR[ev.kind] ?? 0xffffff).toString(16).padStart(6, '0');
@@ -284,7 +376,7 @@ export class Inspector {
 
   // ---------------- packet dissection ----------------
 
-  renderPacket(pkt) {
+  renderPacket(pkt, el = this.bodyEl) {
     const { bytes, fields } = buildHeaderBytes(pkt);
     const color = '#' + (KIND_COLOR[pkt.kind] ?? 0xffffff).toString(16).padStart(6, '0');
     const flagChips = ['SYN', 'ACK', 'FIN', 'RST', 'PSH']
@@ -302,7 +394,7 @@ export class Inspector {
       ? `${esc(pkt.src.name)} → <span class="dim">${esc(pkt.via.name)}</span> → ${esc(pkt.dst.name)}`
       : `${esc(pkt.src.name)} → ${esc(pkt.dst.name)}`;
 
-    this.bodyEl.innerHTML = `
+    el.innerHTML = `
       <div class="sec-title" style="color:${color}">packet #${pkt.id} · ${pkt.proto} · ${pkt.kind}
         ${pkt.lost ? '<span class="bad"> · LOST IN TRANSIT</span>' : ''}</div>
       <table class="field-table">
@@ -321,8 +413,8 @@ export class Inspector {
     `;
 
     // hover ↔ hex highlight
-    const dump = this.bodyEl.querySelector('#hexdump');
-    this.bodyEl.querySelectorAll('tr[data-hex]').forEach(tr => {
+    const dump = el.querySelector('#hexdump');
+    el.querySelectorAll('tr[data-hex]').forEach(tr => {
       tr.addEventListener('mouseenter', () => {
         const [off, len] = tr.dataset.range.split(',').map(Number);
         dump.querySelectorAll('.b').forEach(b => {
@@ -334,8 +426,8 @@ export class Inspector {
         dump.querySelectorAll('.b.hl').forEach(b => b.classList.remove('hl'));
       });
     });
-    const link = this.bodyEl.querySelector('#goto-flow');
-    if (link) link.onclick = (e) => { e.preventDefault(); this.selectFlow(pkt.flow); };
+    const link = el.querySelector('#goto-flow');
+    if (link) link.onclick = (e) => { e.preventDefault(); this._setTab ? this._setTab('flow') : null; this.selectFlow(pkt.flow); };
   }
 }
 

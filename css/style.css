@@ -132,6 +132,17 @@ html, body {
   white-space: nowrap;
   font-size: 11px;
 }
+#inspector-tabs { display: flex; gap: 4px; margin-bottom: 8px; }
+.insp-tab {
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 3px 12px;
+  border-radius: 5px 5px 0 0;
+  border-bottom: 2px solid transparent;
+}
+.insp-tab.on { background: rgba(64, 160, 255, 0.2); border-bottom-color: var(--accent); color: #fff; }
+
 .flow-row:hover { background: rgba(64, 160, 255, 0.12); }
 .flow-row.sel { background: rgba(64, 160, 255, 0.22); outline: 1px solid var(--border); }
 .flow-row .proto { width: 34px; font-weight: bold; }

@@ -97,6 +97,7 @@ export class RolePlayDirector {
     this.player = pick(this.topo.clients);
     // ambient stays on — the rest of the network keeps living around you
     this.inspector?.setFlowFilter?.((f) => f.client === this.player || f.server === this.player);
+    this.inspector?.setRolePlay?.(true);
     if (m.lossBurst) {
       this.engine.lossBurstUntil = this.engine.time + m.lossBurst.secs;
       this.engine.lossBurstRate = m.lossBurst.rate;
@@ -116,6 +117,7 @@ export class RolePlayDirector {
     this.done = false;
     if (this.stream && !this.stream.dead) this.stream.endAt = this.engine.time;  // wind the stream down
     this.inspector?.setFlowFilter?.(null);
+    this.inspector?.setRolePlay?.(false);
     this.engine.lossBurstUntil = 0;
     this.world?.unmarkPlayer?.();
     this.engine.log('■ role-play ended — back to ambient mode', '');
