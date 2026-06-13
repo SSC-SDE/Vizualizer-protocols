@@ -20,6 +20,7 @@ export class Controls {
     this.scenarios = {};
     this.tutor = null;
     this.onReset = null;
+    this.onRoleplay = null;        // P — toggle "be the client" role-play mode
 
     $('btn-pause').onclick = () => this.togglePause();
     $('btn-reset').onclick = () => this.reset();
@@ -35,6 +36,8 @@ export class Controls {
       if (e.target.tagName === 'INPUT') return;
       if (e.code === 'Space') { e.preventDefault(); this.togglePause(); return; }
       if (e.key === 'g' || e.key === 'G') { this.tutor?.toggle(); return; }
+      if (e.key === 'p' || e.key === 'P') { this.onRoleplay?.(); return; }
+      if (e.key === 'Escape') { this.onEscape?.(); return; }
       if (e.key === 'r' || e.key === 'R') { this.reset(); return; }
       const i = Number(e.key) - 1;
       if (i >= 0 && i < SCENARIO_KEYS.length) this.fire(SCENARIO_KEYS[i]);

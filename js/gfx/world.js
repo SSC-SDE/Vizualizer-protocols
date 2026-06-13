@@ -224,6 +224,40 @@ export class World {
     if (this.strata[key]) this.strata[key].activity = v;
   }
 
+  /** Role-play: mark the player's client with a floating 👤 YOU sprite + ground ring. */
+  markPlayer(host) {
+    this.unmarkPlayer();
+    const sprite = makeBubble('👤 YOU', new THREE.Color(0x41a6ff));
+    sprite.material.opacity = 0.95;
+    sprite.position.set(host.pos.x, host.pos.y + 4.6, host.pos.z);
+    this.scene.add(sprite);
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(2.2, 2.5, 40),
+      new THREE.MeshBasicMaterial({ color: 0x41a6ff, transparent: true, opacity: 0.7, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }),
+    );
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.set(host.pos.x, 0.06, host.pos.z);
+    this.scene.add(ring);
+    this._player = { sprite, ring, host };
+  }
+
+  unmarkPlayer() {
+    if (!this._player) return;
+    this.scene.remove(this._player.sprite);
+    this._player.sprite.material.map?.dispose();
+    this._player.sprite.material.dispose();
+    this.scene.remove(this._player.ring);
+    this._player.ring.geometry.dispose();
+    this._player.ring.material.dispose();
+    this._player = null;
+  }
+
+  /** Glide the orbit target toward a host (stops auto-rotate). */
+  focusHost(host) {
+    this.controls.autoRotate = false;
+    this._focusTarget = new THREE.Vector3(host.pos.x, host.pos.y + 1, host.pos.z);
+  }
+
   spawnRipple(pos, color = 0x9dff57) {
     // expanding floor ring — ARP broadcast hitting the segment
     const geo = new THREE.RingGeometry(0.9, 1.05, 48);
@@ -437,6 +471,15 @@ export class World {
   // ---------------- frame ----------------
 
   update(dtReal) {
+    if (this._focusTarget) {
+      this.controls.target.lerp(this._focusTarget, Math.min(1, dtReal * 1.8));
+      if (this.controls.target.distanceTo(this._focusTarget) < 0.05) this._focusTarget = null;
+    }
+    if (this._player) {
+      this._player.ring.rotation.z += dtReal * 0.8;
+      const pulse = 0.55 + Math.sin(performance.now() * 0.004) * 0.2;
+      this._player.ring.material.opacity = pulse;
+    }
     this.controls.update();
     for (const rec of this.hostMeshes.values()) {
       if (rec.spin) {

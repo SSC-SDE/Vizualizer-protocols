@@ -31,6 +31,10 @@ export class TcpConnection {
     this.client = client;
     this.server = server;
     this.proto = 'TCP';
+    // role-play: the client side pauses at each "client would now send X" point and
+    // waits for clientAck()/clientRequest()/clientFin(). Server side stays automatic.
+    this.manual = !!opts.manual;
+    this.onManual = null;        // (what) => void — fired when the player can act
     this.label = opts.label || `HTTP ${server.name}`;
     this.sport = nextEphemeral();
     this.dport = opts.dport ?? 80;
@@ -161,7 +165,8 @@ export class TcpConnection {
   // ---------------------------------------------------------------- receive path
 
   onPacket(p) {
-    if (this.finished && p.kind !== KIND.ACK) return;
+    // ACK and FIN must still flow after _finish so a 4-way close can complete
+    if (this.finished && p.kind !== KIND.ACK && p.kind !== KIND.FIN) return;
     const atServer = p.dst === this.server;
     if (atServer) this._serverRecv(p); else this._clientRecv(p);
   }
@@ -211,9 +216,13 @@ export class TcpConnection {
     }
 
     if (p.flags.FIN) {
-      // client FIN (after our FIN) → final ACK, we're done
+      // client FIN → ACK it. For a player-driven active close, also send our own FIN
+      // so the client sees a full 4-way teardown; otherwise this is the final ACK.
       this.sstate = 'CLOSED';
-      this._send(false, KIND.ACK, { flags: { ACK: 1 }, noLoss: true, note: 'final ACK' });
+      this._send(false, KIND.ACK, { flags: { ACK: 1 }, noLoss: true, note: 'ACK of client FIN' });
+      if (this.manual) {
+        this._send(false, KIND.FIN, { flags: { FIN: 1, ACK: 1 }, noLoss: true, note: 'server FIN — connection close' });
+      }
       this._finish();
       this.engine.log(`✓ ${this.name} closed cleanly in ${(this.engine.time - this.startedAt).toFixed(1)}s, ${this.retxCount} retx`, 'ok');
     }
@@ -237,6 +246,12 @@ export class TcpConnection {
         return;
       }
       if (this.cstate !== 'SYN_SENT') return;
+      if (this.manual) {
+        // pause: the player must now dispatch the handshake ACK themselves
+        this.cstate = 'SYNACK_RCVD';
+        this.onManual?.('SYN-ACK');
+        return;
+      }
       this.cstate = 'ESTABLISHED';
       this._send(true, KIND.ACK, {
         flags: { ACK: 1 }, seq: (this.iss_c + 1) >>> 0, ackNo: (this.iss_s + 1) >>> 0,
@@ -255,12 +270,52 @@ export class TcpConnection {
     }
 
     if (p.flags.FIN) {
+      if (this.manual) {
+        // player already sent the active-close FIN; this is the server's FIN → final ACK
+        this.cstate = 'CLOSED';
+        this._send(true, KIND.ACK, { flags: { ACK: 1 }, noLoss: true, note: 'final ACK (connection closed)' });
+        this._finish();
+        return;
+      }
       // server done sending → ACK it, send our FIN
       this.cstate = 'TIME_WAIT';
       this._send(true, KIND.ACK, { flags: { ACK: 1 }, noLoss: true, note: 'ack server FIN' });
       this._send(true, KIND.FIN, { flags: { FIN: 1, ACK: 1 }, noLoss: true, note: 'client FIN' });
       return;
     }
+  }
+
+  // ---------------------------------------------------------------- manual (role-play) client driver
+  // The player dispatches each client-side packet by hand. Returns false if the
+  // action is out of order (handshake not at the right point yet).
+
+  clientAck() {
+    if (this.cstate !== 'SYNACK_RCVD') return false;
+    this.cstate = 'ESTABLISHED';
+    this._send(true, KIND.ACK, {
+      flags: { ACK: 1 }, seq: (this.iss_c + 1) >>> 0, ackNo: (this.iss_s + 1) >>> 0,
+      note: 'handshake complete',
+    });
+    return true;
+  }
+
+  clientRequest() {
+    if (this.cstate !== 'ESTABLISHED' || this.requestSent) return false;
+    this.requestSent = true;
+    this._sendRequest();
+    return true;
+  }
+
+  clientFin() {
+    if (this.cstate !== 'ESTABLISHED') return false;
+    this.cstate = 'FIN_WAIT_1';
+    this._send(true, KIND.FIN, {
+      flags: { FIN: 1, ACK: 1 }, noLoss: true,     // player has no retransmit timer — deliver the close
+      seq: (this.iss_c + 1 + (this.requestSent ? 312 : 0)) >>> 0,
+      ackNo: this._sseq(this.rcv_nxt),
+      note: 'client FIN — active close',
+    });
+    return true;
   }
 
   _clientRecvData(p) {
@@ -408,6 +463,7 @@ export class TcpConnection {
   }
 
   _maybeFinish() {
+    if (this.manual) return;     // role-play: the player decides when to close
     if (this.snd_una >= this.totalBytes && this.sstate === 'ESTABLISHED') {
       this.sstate = 'FIN_WAIT_1';
       this._sendFin();

@@ -12,6 +12,8 @@ import { PacketLayer } from './gfx/packets.js';
 import { Hud } from './ui/hud.js';
 import { Inspector } from './ui/inspector.js';
 import { Tutor } from './ui/tutor.js';
+import { RolePlayDirector } from './app/roleplay.js';
+import { ActionDeck } from './ui/actiondeck.js';
 import { buildNetwork, buildScene } from './app/topology.js';
 import { Controls, SCENARIO_KEYS } from './app/controls.js';
 
@@ -37,6 +39,15 @@ const tutor = new Tutor(engine, {
   getAmbient: () => controls.getAmbient(),
 });
 
+// ---------------- role-play ("be the client") ----------------
+
+const roleplay = new RolePlayDirector(engine, topo, { controls, world, tutor, inspector });
+roleplay.onActivity = (host, text, color, dur) => world.showActivity(host, text, color, dur);
+const deck = new ActionDeck(roleplay);
+controls.onRoleplay = () => deck.toggle();
+controls.onEscape = () => { if (roleplay.active) roleplay.exit(); };
+document.getElementById('btn-roleplay').onclick = () => deck.toggle();
+
 // ---------------- wire ----------------
 
 engine.onSend = (pkt) => {
@@ -45,11 +56,19 @@ engine.onSend = (pkt) => {
   if (pkt.kind === KIND.ARP_REQ) world.spawnRipple(pkt.src.pos);   // L2 broadcast hits the segment
   tutor.onSend(pkt);
 };
-engine.onDeliver = (pkt) => { packets.onDeliver(pkt); world.pulseHost(pkt.dst, 0.7); };
+engine.onDeliver = (pkt) => {
+  packets.onDeliver(pkt);
+  world.pulseHost(pkt.dst, 0.7);
+  roleplay.observeDeliver(pkt);
+};
 engine.onDrop = (pkt) => { packets.onDrop(pkt); tutor.onDrop(pkt); };
 
-world.onPickPacket = (pkt) => inspector.showPacket(pkt);
-world.onPickHost = (host) => inspector.showHost(host);
+world.onPickPacket = (pkt) => {
+  // during role-play the inspector stays pinned to your own traffic
+  if (deck.active && pkt.src !== roleplay.player && pkt.dst !== roleplay.player) return;
+  inspector.showPacket(pkt);
+};
+world.onPickHost = (host) => { if (deck.active) deck.pickHost(host); else inspector.showHost(host); };
 director.onSpawnBot = (bot) => world.addBot(bot);
 director.onActivity = (host, text, color) => world.showActivity(host, text, color);
 
@@ -71,6 +90,7 @@ controls.scenarios = {
 };
 
 controls.onReset = () => {
+  if (roleplay.active) roleplay.exit();
   engine.reset();
   director.reset();
   packets.clear();
@@ -96,7 +116,7 @@ setInterval(() => {
 const clock = new THREE.Clock();
 const layerCounts = { L2: 0, L3: 0, L4_UDP: 0, L4_TCP: 0 };
 
-engine.log('⏚ WIREDEPTH online — 1-9 fire scenarios, G for guide mode, R resets', 'ok');
+engine.log('⏚ WIREDEPTH online — 1-9 fire scenarios, G guide, P role-play, R resets', 'ok');
 engine.log('ambient traffic warming up…', '');
 
 function frame() {
@@ -106,6 +126,7 @@ function frame() {
     const dt = dtReal * controls.timeScale;
     engine.update(dt);
     director.update(dt);
+    roleplay.update(dt);
   }
 
   // live per-lane occupancy → strata glow + HUD meter
@@ -128,3 +149,4 @@ const params = new URLSearchParams(location.search);
 if (params.get('guide')) tutor.enable();
 const scnParam = params.get('scn');
 if (scnParam && SCENARIO_KEYS.includes(scnParam)) setTimeout(() => controls.fire(scnParam), 800);
+if (params.get('mode') === 'roleplay') setTimeout(() => deck.toggle(), 800);

@@ -13,7 +13,14 @@ export class Inspector {
     this.modeEl = document.getElementById('inspector-mode');
     this.selected = null;        // flow
     this.pinnedPacket = null;
+    this.flowFilter = null;      // role-play: restrict the flow list to the player's flows
     this._lastListRender = 0;
+  }
+
+  /** Restrict (or clear) which flows the list shows. */
+  setFlowFilter(fn) {
+    this.flowFilter = fn;
+    this._lastListRender = 0;    // force an immediate re-render
   }
 
   reset() {
@@ -32,7 +39,9 @@ export class Inspector {
     if (now - this._lastListRender < 250) return;
     this._lastListRender = now;
 
-    const flows = this.engine.flows.slice(-40).reverse();
+    let flows = this.engine.flows;
+    if (this.flowFilter) flows = flows.filter(this.flowFilter);
+    flows = flows.slice(-40).reverse();
     this.listEl.innerHTML = '';
     for (const f of flows) {
       const row = document.createElement('div');
