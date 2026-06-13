@@ -99,3 +99,8 @@ ARP, ping and traceroute without a browser.
 
 Not modeled (knowingly): SACK blocks, window scaling in flight, IP fragmentation,
 TCP/UDP checksums (needs pseudo-header), IPv6.
+
+## Credits
+
+Created by [Shankhya Chatterjee](https://shankhyachatterjee.com) — dev of
+[thesystembible.com](https://thesystembible.com).

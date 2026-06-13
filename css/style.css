@@ -424,6 +424,20 @@ label span { color: var(--fg); min-width: 34px; font-variant-numeric: tabular-nu
 .rp-grade { font-size: 64px; font-weight: bold; text-align: center; margin: 8px 0; text-shadow: 0 0 24px currentColor; }
 .rp-recap-table { width: 100%; margin-bottom: 6px; }
 
+/* ---------- credit ---------- */
+#credit {
+  position: fixed;
+  left: 14px;
+  bottom: 14px;
+  z-index: 6;
+  font-size: 10px;
+  color: var(--dim);
+  text-shadow: 0 0 6px rgba(0, 0, 0, 0.9);
+  pointer-events: auto;
+}
+#credit a { color: var(--accent); text-decoration: none; }
+#credit a:hover { text-decoration: underline; }
+
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-thumb { background: rgba(64, 160, 255, 0.3); border-radius: 3px; }
 ::-webkit-scrollbar-track { background: transparent; }
