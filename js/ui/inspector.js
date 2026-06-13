@@ -9,14 +9,14 @@ export class Inspector {
   constructor(engine) {
     this.engine = engine;
     this.listEl = document.getElementById('flow-list');
-    this.tabsEl = document.getElementById('inspector-tabs');
     this.bodyEl = document.getElementById('inspector-body');
     this.modeEl = document.getElementById('inspector-mode');
+    this.datagramEl = document.getElementById('hud-datagram');       // separate role-play card
+    this.datagramBody = document.getElementById('datagram-body');
     this.selected = null;        // flow
     this.pinnedPacket = null;
     this.flowFilter = null;      // role-play: restrict the flow list to the player's flows
-    this.rpMode = false;         // role-play: show flow / datagram tabs
-    this.tab = 'flow';           // active tab when rpMode
+    this.rpMode = false;         // role-play: the datagram card is live
     this.ladderPinned = null;    // packet dissected from a clicked ladder row — persists
     this._ladderRows = null;     // hit-test geometry for the wire ladder
     this._lastListRender = 0;
@@ -28,34 +28,19 @@ export class Inspector {
     this._lastListRender = 0;    // force an immediate re-render
   }
 
-  /** Toggle the role-play flow/datagram tabs. */
+  /** Show/hide the separate datagram dissection card. */
   setRolePlay(on) {
     this.rpMode = on;
-    this.tab = 'flow';
     this.ladderPinned = null;
-    this._renderTabs();
-  }
-
-  _renderTabs() {
-    if (!this.tabsEl) return;
-    if (!this.rpMode) { this.tabsEl.hidden = true; return; }
-    this.tabsEl.hidden = false;
-    this.tabsEl.innerHTML =
-      `<button class="insp-tab ${this.tab === 'flow' ? 'on' : ''}" data-tab="flow">flow</button>` +
-      `<button class="insp-tab ${this.tab === 'datagram' ? 'on' : ''}" data-tab="datagram">datagram</button>`;
-    this.tabsEl.querySelectorAll('[data-tab]').forEach((b) => b.onclick = () => this._setTab(b.dataset.tab));
-  }
-
-  _setTab(tab) {
-    this.tab = tab;
-    this._renderTabs();
-    if (tab === 'datagram') this._renderDatagram();
-    else if (this.selected) this.renderFlow();
+    document.body.classList.toggle('roleplay', on);
+    if (this.datagramEl) this.datagramEl.hidden = !on;
+    if (on) this._renderDatagram();
   }
 
   _renderDatagram() {
-    if (this.ladderPinned) this.renderPacket(this.ladderPinned, this.bodyEl);
-    else this.bodyEl.innerHTML = '<div class="dim" style="padding:14px 4px">Click any row in the wire ladder (or one of your packets in the scene) to dissect the datagram — headers, hex and payload. It stays pinned here.</div>';
+    if (!this.datagramBody) return;
+    if (this.ladderPinned) this.renderPacket(this.ladderPinned, this.datagramBody);
+    else this.datagramBody.innerHTML = '<div class="dim" style="padding:10px 4px">Click any row in the wire ladder (or one of your packets in the scene) to dissect the datagram here — headers, hex and payload. It stays pinned.</div>';
   }
 
   reset() {
@@ -101,16 +86,14 @@ export class Inspector {
     this.pinnedPacket = null;
     this._finalRendered = false;
     this.modeEl.textContent = '// flow';
-    if (this.rpMode && this.tab === 'datagram') return;   // keep the pinned datagram visible
     this.renderFlow();
   }
 
   showPacket(pkt) {
     if (this.rpMode) {
-      // feed the persistent datagram tab instead of clobbering the flow view
+      // feed the persistent datagram card instead of clobbering the flow view
       this.ladderPinned = pkt;
-      this.selected = pkt.flow || this.selected;
-      this._setTab('datagram');
+      this._renderDatagram();
       return;
     }
     this.pinnedPacket = pkt;
@@ -139,8 +122,6 @@ export class Inspector {
   // periodic refresh of live flow view
   tick() {
     this.updateList();
-    this._renderTabs();
-    if (this.rpMode && this.tab === 'datagram') return;   // frozen datagram — set on click
     if (this.pinnedPacket) return;                 // packet view is a frozen capture
     if (!this.selected) return;
     if (this.selected.dead) {
@@ -254,7 +235,7 @@ export class Inspector {
     const row = this._ladderRows.find(r => y >= r.y0 && y <= r.y1);
     if (!row) return;
     this.ladderPinned = this._packetFromLadder(this._ladderFlow, row.ev);
-    this._setTab('datagram');
+    this._renderDatagram();
   }
 
   /** Rebuild a Packet from a flow + one of its history events, for dissection. */
@@ -427,7 +408,7 @@ export class Inspector {
       });
     });
     const link = el.querySelector('#goto-flow');
-    if (link) link.onclick = (e) => { e.preventDefault(); this._setTab ? this._setTab('flow') : null; this.selectFlow(pkt.flow); };
+    if (link) link.onclick = (e) => { e.preventDefault(); this.selectFlow(pkt.flow); };
   }
 }
 

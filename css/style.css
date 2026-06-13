@@ -132,16 +132,17 @@ html, body {
   white-space: nowrap;
   font-size: 11px;
 }
-#inspector-tabs { display: flex; gap: 4px; margin-bottom: 8px; }
-.insp-tab {
-  font-size: 10px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  padding: 3px 12px;
-  border-radius: 5px 5px 0 0;
-  border-bottom: 2px solid transparent;
+/* role-play: datagram card sits below a shortened inspector, same right column */
+.hud-datagram {
+  top: calc(48vh + 8px);
+  right: 14px;
+  bottom: 14px;
+  width: 384px;
+  overflow-y: auto;
+  border-color: rgba(99, 160, 255, 0.5);
+  box-shadow: 0 0 28px rgba(40, 120, 255, 0.2);
 }
-.insp-tab.on { background: rgba(64, 160, 255, 0.2); border-bottom-color: var(--accent); color: #fff; }
+body.roleplay .hud-inspector { max-height: 46vh; }
 
 .flow-row:hover { background: rgba(64, 160, 255, 0.12); }
 .flow-row.sel { background: rgba(64, 160, 255, 0.22); outline: 1px solid var(--border); }
