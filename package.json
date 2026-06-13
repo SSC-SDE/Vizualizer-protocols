@@ -5,6 +5,6 @@
   "type": "module",
   "scripts": {
     "start": "python3 -m http.server 8077",
-    "test": "node tests/transport.test.mjs && node tests/l2l3.test.mjs && node tests/roleplay.test.mjs"
+    "test": "node tests/transport.test.mjs && node tests/l2l3.test.mjs && node tests/roleplay.test.mjs && node tests/serverroleplay.test.mjs"
   }
 }

@@ -35,6 +35,10 @@ export class TcpConnection {
     // waits for clientAck()/clientRequest()/clientFin(). Server side stays automatic.
     this.manual = !!opts.manual;
     this.onManual = null;        // (what) => void — fired when the player can act
+    // role-play (server): the SERVER side pauses (SYN-ACK, serving data, FIN) and waits
+    // for serverSynAck()/serverRespond()/serverFin(); the client drives itself.
+    this.manualServer = !!opts.manualServer;
+    this.onServerEvent = null;   // (what, pkt) => void — server-side prompt for the player
     this.label = opts.label || `HTTP ${server.name}`;
     this.sport = nextEphemeral();
     this.dport = opts.dport ?? 80;
@@ -181,6 +185,12 @@ export class TcpConnection {
       }
       this.sstate = 'SYN_RCVD';
       this.engine.synBacklog++;
+      if (this.manualServer) {
+        // pause: the player must send the SYN-ACK by hand
+        this._svPending = 'SYNACK';
+        this.onServerEvent?.('SYN', p);
+        return;
+      }
       this.synAckDeadline = this.engine.time + this.rto;
       this._send(false, KIND.SYNACK, {
         flags: { SYN: 1, ACK: 1 }, seq: this.iss_s, ackNo: (this.iss_c + 1) >>> 0,
@@ -198,15 +208,21 @@ export class TcpConnection {
     }
 
     if (p.kind === KIND.REQ) {
+      // ack the request either way so the client doesn't retransmit it
+      this._send(false, KIND.ACK, {
+        flags: { ACK: 1 }, seq: this._sseq(this.snd_nxt), ackNo: this._cack(), len: 0,
+      });
+      if (this.manualServer) {
+        // pause: the player decides to serve the response
+        this._svPending = 'RESPOND';
+        this.onServerEvent?.('REQUEST', p);
+        return;
+      }
       // client request received → start streaming response
       if (this.sstate === 'ESTABLISHED' && this.snd_nxt === 0) {
         this.engine.log(`▶ ${this.name} GET → streaming ${fmtBytes(this.totalBytes)}`, '');
         this._pump();
       }
-      // ack the request
-      this._send(false, KIND.ACK, {
-        flags: { ACK: 1 }, seq: this._sseq(this.snd_nxt), ackNo: this._cack(), len: 0,
-      });
       return;
     }
 
@@ -315,6 +331,35 @@ export class TcpConnection {
       ackNo: this._sseq(this.rcv_nxt),
       note: 'client FIN — active close',
     });
+    return true;
+  }
+
+  // ---------------------------------------------------------------- manual (role-play) server driver
+  // The player runs the server: completes the handshake, serves the response, closes.
+
+  serverSynAck() {
+    if (this.sstate !== 'SYN_RCVD' || this._svPending !== 'SYNACK') return false;
+    this._svPending = null;
+    this.synAckDeadline = this.engine.time + this.rto;   // auto-retransmit if the client's ACK is lost
+    this._send(false, KIND.SYNACK, {
+      flags: { SYN: 1, ACK: 1 }, seq: this.iss_s, ackNo: (this.iss_c + 1) >>> 0,
+      note: 'server ISN, ack client ISN+1',
+    });
+    return true;
+  }
+
+  serverRespond() {
+    if (this.sstate !== 'ESTABLISHED' || this._svPending !== 'RESPOND') return false;
+    this._svPending = null;
+    this.engine.log(`▶ ${this.name} serving ${fmtBytes(this.totalBytes)}`, '');
+    this._pump();
+    return true;
+  }
+
+  serverFin() {
+    if (this.sstate !== 'ESTABLISHED') return false;
+    this.sstate = 'FIN_WAIT_1';
+    this._sendFin();
     return true;
   }
 
@@ -463,7 +508,7 @@ export class TcpConnection {
   }
 
   _maybeFinish() {
-    if (this.manual) return;     // role-play: the player decides when to close
+    if (this.manual || this.manualServer) return;   // role-play: the player decides when to close
     if (this.snd_una >= this.totalBytes && this.sstate === 'ESTABLISHED') {
       this.sstate = 'FIN_WAIT_1';
       this._sendFin();

@@ -11,6 +11,15 @@ loss just recovers), the web-page DATA step uses a single cumulative auto-ACK
 (client auto-ACKs incoming segments) rather than a manual per-segment ACK, and
 camera glide is a simple target lerp.
 
+There is also a second mode, **"Run the server"** (`js/app/serverroleplay.js`,
+`SERVER_MISSIONS` in `missions.js`), where you operate a server and answer
+incoming clients. It mirrors the client mode through a generalized action deck
+(`actiondeck.js` now hosts both directors) and adds a `manualServer: true` option
+to `TcpConnection` that pauses the *server* side (SYN-ACK / serve-data / FIN)
+while a virtual client drives itself. Server missions: serve a web request (TCP,
+flagship), answer a ping (ICMP), be the DNS resolver (UDP). Tests:
+`tests/serverroleplay.test.mjs`.
+
 ## Concept
 
 A game mode where the user *is* one of the clients. Instead of watching

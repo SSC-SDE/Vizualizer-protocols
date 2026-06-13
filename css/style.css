@@ -407,7 +407,9 @@ label span { color: var(--fg); min-width: 34px; font-variant-numeric: tabular-nu
   width: 560px;
   max-width: calc(100vw - 40px);
 }
-.rp-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 12px 0; }
+.rp-modal-wide { width: 640px; }
+.rp-group-t { font-size: 10px; letter-spacing: 0.12em; color: var(--accent); margin: 12px 0 6px; }
+.rp-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 6px 0; }
 .rp-card {
   text-align: left;
   padding: 12px;

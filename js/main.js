@@ -13,6 +13,7 @@ import { Hud } from './ui/hud.js';
 import { Inspector } from './ui/inspector.js';
 import { Tutor } from './ui/tutor.js';
 import { RolePlayDirector } from './app/roleplay.js';
+import { ServerRolePlayDirector } from './app/serverroleplay.js';
 import { ActionDeck } from './ui/actiondeck.js';
 import { buildNetwork, buildScene } from './app/topology.js';
 import { Controls, SCENARIO_KEYS } from './app/controls.js';
@@ -42,10 +43,14 @@ const tutor = new Tutor(engine, {
 // ---------------- role-play ("be the client") ----------------
 
 const roleplay = new RolePlayDirector(engine, topo, { controls, world, tutor, inspector });
-roleplay.onActivity = (host, text, color, dur) => world.showActivity(host, text, color, dur);
-const deck = new ActionDeck(roleplay);
+const serverplay = new ServerRolePlayDirector(engine, topo, { controls, world, inspector });
+const announce = (host, text, color, dur) => world.showActivity(host, text, color, dur);
+roleplay.onActivity = announce;
+serverplay.onActivity = announce;
+const deck = new ActionDeck({ client: roleplay, server: serverplay });
+const rpPlayer = () => roleplay.active ? roleplay.player : serverplay.active ? serverplay.player : null;
 controls.onRoleplay = () => deck.toggle();
-controls.onEscape = () => { if (roleplay.active) roleplay.exit(); };
+controls.onEscape = () => { if (deck.active) deck.toggle(); };
 document.getElementById('btn-roleplay').onclick = () => deck.toggle();
 
 // ---------------- wire ----------------
@@ -60,12 +65,14 @@ engine.onDeliver = (pkt) => {
   packets.onDeliver(pkt);
   world.pulseHost(pkt.dst, 0.7);
   roleplay.observeDeliver(pkt);
+  serverplay.observeDeliver(pkt);
 };
 engine.onDrop = (pkt) => { packets.onDrop(pkt); tutor.onDrop(pkt); };
 
 world.onPickPacket = (pkt) => {
   // during role-play the inspector stays pinned to your own traffic
-  if (deck.active && pkt.src !== roleplay.player && pkt.dst !== roleplay.player) return;
+  const pl = rpPlayer();
+  if (pl && pkt.src !== pl && pkt.dst !== pl) return;
   inspector.showPacket(pkt);
 };
 world.onPickHost = (host) => { if (deck.active) deck.pickHost(host); else inspector.showHost(host); };
@@ -91,6 +98,7 @@ controls.scenarios = {
 
 controls.onReset = () => {
   if (roleplay.active) roleplay.exit();
+  if (serverplay.active) serverplay.exit();
   engine.reset();
   director.reset();
   packets.clear();
@@ -127,6 +135,7 @@ function frame() {
     engine.update(dt);
     director.update(dt);
     roleplay.update(dt);
+    serverplay.update(dt);
   }
 
   // live per-lane occupancy → strata glow + HUD meter

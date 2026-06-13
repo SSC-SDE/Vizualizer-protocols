@@ -110,3 +110,61 @@ export const MISSIONS = {
 MISSIONS.lossy.steps = MISSIONS.webPage.steps;
 
 export const MISSION_ORDER = ['ping', 'liveStream', 'webPage', 'lossy'];
+
+// ---------------------------------------------------------------- "Run the server" missions
+// Here the player operates a server and answers incoming clients. `dst: 'requester'`
+// always means the client that asked. `auto` steps are things the engine/virtual
+// client does; an auto value that is a real KIND is matched on delivery.
+
+export const SERVER_MISSIONS = {
+  acceptConn: {
+    title: '🌐 Serve a web request',
+    blurb: 'Run WEB-EDGE. A client connects — complete the handshake, serve the page, close.',
+    intro: 'You are WEB-EDGE, listening on :80. A client just sent a SYN — complete the TCP handshake from the server side.',
+    type: 'tcp', serverKey: 'web', bytes: 64 * 1024,
+    steps: [
+      { auto: 'SYN', label: 'incoming SYN' },
+      { expect: { kind: KIND.SYNACK, dst: 'requester', layer: 'L4_TCP' },
+        prompt: 'A SYN arrived. Open your half of the handshake.',
+        hint: 'Reply SYN-ACK (L4-TCP) to the requester — your ISN plus an ack of theirs.', label: 'SYN-ACK' },
+      { auto: 'EST', label: 'client ACK → ESTABLISHED' },
+      { auto: 'REQ', label: 'incoming REQUEST' },
+      { expect: { kind: KIND.DATA, dst: 'requester', layer: 'L4_TCP' },
+        prompt: 'The client sent GET. Serve the page.',
+        hint: 'Send DATA (L4-TCP) to the requester — the server streams the response in MSS segments.', label: 'serve DATA' },
+      { auto: 'XFER', label: 'data + client ACKs' },
+      { expect: { kind: KIND.FIN, dst: 'requester', layer: 'L4_TCP' },
+        prompt: 'Page delivered. Close the connection.',
+        hint: 'Send FIN (L4-TCP) to start the four-way teardown.', label: 'FIN' },
+      { auto: 'CLOSE', label: 'teardown' },
+    ],
+  },
+
+  answerPing: {
+    title: '🩺 Answer a ping',
+    blurb: 'A client pings you. Echo it straight back.',
+    intro: 'You are WEB-EDGE. An ICMP echo request just hit your IP stack — pong it.',
+    type: 'icmp', serverKey: 'web',
+    steps: [
+      { auto: KIND.ECHO_REQ, label: 'incoming ECHO-REQ' },
+      { expect: { kind: KIND.ECHO_REP, dst: 'requester', layer: 'L3' },
+        prompt: 'Echo request received. Reply.',
+        hint: 'ICMP echo reply (L3) straight back to the sender — copy the payload.', label: 'ECHO-REP' },
+    ],
+  },
+
+  beDNS: {
+    title: '☝️ Be the DNS resolver',
+    blurb: 'Run DNS-CORE. A client asks for a name — answer with an A record.',
+    intro: 'You are DNS-CORE on :53. A query just arrived — resolve it.',
+    type: 'dns', serverKey: 'dns',
+    steps: [
+      { auto: KIND.DNS_Q, label: 'incoming DNS-QUERY' },
+      { expect: { kind: KIND.DNS_R, dst: 'requester', layer: 'L4_UDP' },
+        prompt: 'Query received. Answer it.',
+        hint: 'DNS reply (L4-UDP) to the client — the A record with a TTL.', label: 'DNS-REPLY' },
+    ],
+  },
+};
+
+export const SERVER_MISSION_ORDER = ['acceptConn', 'answerPing', 'beDNS'];
